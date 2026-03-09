@@ -1,0 +1,39 @@
+debug: false
+verbose: false
+skip_existing: false
+n_processes: 1
+data_root_dir: "../hand2gripper_dataset/"
+processed_data_root_dir: "../data/processed/"
+# >>> Hand2Gripper >>>
+hand2gripper_annotation_data_root_dir: "../data/hand2gripper_annotations/"
+# <<< Hand2Gripper <<<
+demo_name: "demo"
+
+# Processing settings
+mode: ["all"]  # Default processing mode
+demo_num: null  # Process specific demo number (null = process all videos in the root folder)
+
+# Additional settings
+debug_cameras: ['sideview', 'birdview', 'frontview'] # Add other robomimic cameras like sideview, etc. Warning: this significantly slows down the processing time
+
+# EPIC-KITCHENS configuration override
+input_resolution: 480
+output_resolution: 480
+# >>> Hand2Gripper >>>
+hand_model: 'hamer'  # Options: 'hamer', 'wilor'
+robot: "Arx5"
+my_robo: true
+eye_to_hand_left: "camera/eye_to_hand_result_left_latest.json"
+eye_to_hand_right: "camera/eye_to_hand_result_right_latest.json"
+xml_path: "../submodules/Fucking_Arx_Mujoco/SDK/R5a/meshes/R5a_R5master.xml"
+# <<< Hand2Gripper <<<
+gripper: "Robotiq85"
+square: false
+epic: true
+bimanual_setup: "shoulders"
+target_hand: "both"
+constrained_hand: false
+depth_for_overlay: true
+render: false
+camera_intrinsics: "camera/camera_intrinsics_d435i.json"
+camera_extrinsics: "camera/camera_extrinsics_ego_bimanual_shoulders_ur5e.json"

@@ -1,0 +1,17 @@
+*.egg-info
+**/_DATA/*
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+data/processed_origin/*
+data/
+!data/processed/.gitkeep
+**/__pycache__/*
+*.pyc
+*.pth
+outputs/*
+phantom/outputs/*
+phantom/aloha/
+hand2gripper_dataset/
+.vscode/
+paper/
