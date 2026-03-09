@@ -74,7 +74,7 @@ def plot_trajectory(trajectory, title="Camera Trajectory"):
 
 if __name__ == "__main__":
     # 定义轨迹文件夹路径
-    TRAJ_DIR = "/home/user/ros2_ws/camera_data/traj"
+    TRAJ_DIR = "./ros2_ws/camera_data/traj"
     
     print(f"正在加载轨迹: {TRAJ_DIR}")
     trajectory = load_trajectory(TRAJ_DIR)

@@ -180,9 +180,9 @@ class RobotInpaintProcessor(BaseProcessor):
                 import mediapy as media
                 from scipy.spatial.transform import Rotation as R
                 
-                # 使用 fucking_arx_mujoco 的模块
-                from fucking_arx_mujoco.real.camera.camera_utils import load_camera_intrinsics, load_eye_to_hand_matrix, T_optical_to_link
-                from fucking_arx_mujoco.real2sim import Real2Sim
+                # 使用 arx_mujoco 的模块
+                from arx_mujoco.real.camera.camera_utils import load_camera_intrinsics, load_eye_to_hand_matrix, T_optical_to_link
+                from arx_mujoco.real2sim import Real2Sim
                 
                 # 1. 加载相机参数和手眼标定矩阵
                 T_flange_init_camlink_L = load_eye_to_hand_matrix(self.eye_to_hand_left)
@@ -288,8 +288,8 @@ class RobotInpaintProcessor(BaseProcessor):
                 _, _, _, v_fov = load_camera_intrinsics(self.camera_intrinsics)
                 
                 # XML 路径 (单臂模型)
-                xml_path_L = getattr(self, 'xml_path', "/home/user/Hand2Gripper_phantom/submodules/Fucking_Arx_Mujoco/SDK/R5a/meshes/R5a_R5master.xml")
-                xml_path_R = getattr(self, 'xml_path', "/home/user/Hand2Gripper_phantom/submodules/Fucking_Arx_Mujoco/SDK/R5a/meshes/R5a_R5master.xml")
+                xml_path_L = getattr(self, 'xml_path', "./submodules/arx_mujoco/SDK/R5a/meshes/R5a_R5master.xml")
+                xml_path_R = getattr(self, 'xml_path', "./submodules/arx_mujoco/SDK/R5a/meshes/R5a_R5master.xml")
                 
                 print(f"[INFO] 初始化左臂 Real2Sim: {xml_path_L}")
                 r2s_L = Real2Sim(

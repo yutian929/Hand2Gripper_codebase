@@ -245,7 +245,7 @@ class RTABMapClient:
 # Example usage
 if __name__ == "__main__":
     # Example 1: Launch and wait for specific output text
-    data_dir = "/home/user/Hand2Gripper_phantom/data/processed/epic/0"
+    data_dir = "./data/processed/epic/0"
     
     try:
         client = RTABMapClient(data_dir)

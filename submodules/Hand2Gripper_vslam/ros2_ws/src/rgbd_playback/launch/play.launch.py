@@ -8,7 +8,7 @@ def generate_launch_description():
     
     data_dir_arg = DeclareLaunchArgument(
         'data_dir',
-        default_value='/home/user/Hand2Gripper_phantom/data/raw/epic/0', 
+        default_value='./data/raw/epic/0', 
         description='Path to the directory containing video_L.mp4, depth.npy and json'
     )
 

@@ -10,7 +10,7 @@ def generate_launch_description():
     # 默认路径设为你刚才提到的目录，运行时也可通过 data_dir:=... 覆盖
     data_dir_arg = DeclareLaunchArgument(
         'data_dir',
-        default_value='/home/user/ros2_ws/disturb', 
+        default_value='./ros2_ws/disturb', 
         description='Path to directory containing video_L.mp4, depth.npy, camera_intrinsics.json and segmentation_processor/masks_arm.npy'
     )
     
