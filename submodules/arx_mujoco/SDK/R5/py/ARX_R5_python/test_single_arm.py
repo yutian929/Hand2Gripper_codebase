@@ -5,8 +5,8 @@ import numpy as np
 def test_single_arm(single_arm: SingleArm, duration: float = 10.0, dt: float = 0.01):
     #single_arm.go_home()
     while(1):
-        position = np.array([0.0, 0.0, 0.1])  # x, y, z 位置
-        quaternion = np.array([1.0, 0.0, 0.0, 0.0])  # 四元数表示方向
+        position = np.array([0.0, 0.0, 0.1])  # x, y, z position
+        quaternion = np.array([1.0, 0.0, 0.0, 0.0])  # quaternion for orientation
 
         success = single_arm.set_ee_pose(pos=position, quat=quaternion)
         
@@ -16,8 +16,8 @@ def test_single_arm(single_arm: SingleArm, duration: float = 10.0, dt: float = 0
         #print(single_arm.get_ee_pose())
         #print(single_arm.get_joint_positions())
          
-        #positions = [0.5, 1.0, -0.5]  # 指定每个关节的位置
-        #joint_names = ["joint1", "joint2", "joint3"]  # 对应关节的名称
+        #positions = [0.5, 1.0, -0.5]  # specify position for each joint
+        #joint_names = ["joint1", "joint2", "joint3"]  # corresponding joint names
 
         #success = single_arm.set_joint_positions(positions=positions, joint_names=joint_names)
         

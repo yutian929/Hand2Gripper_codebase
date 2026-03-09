@@ -1,19 +1,19 @@
 # inference.py
 # -*- coding: utf-8 -*-
 """
-Hand-to-Gripper 模型推理脚本。
+Hand-to-Gripper model inference script.
 
-功能:
-- 加载一个训练好的 Hand2GripperModel。
-- 读取一个 .npz 格式的样本数据。
-- 执行完整的预处理、模型推理和后处理。
-- 打印预测结果 (left, right) 并可选地生成可视化图像。
+Features:
+- Load a trained Hand2GripperModel.
+- Read a sample data file in .npz format.
+- Execute the complete preprocessing, model inference, and postprocessing pipeline.
+- Print the predicted results (left, right) and optionally generate a visualization image.
 
-用法示例:
-  # 对 sample.npz 进行推理，并保存可视化结果到 output.png
+Usage example:
+  # Perform inference on sample.npz and save the visualization to output.png
   python inference.py --checkpoint hand2gripper.pt --input sample.npz --output output.png
 
-  # 仅打印结果，不生成可视化
+  # Print results only, without generating visualization
   python inference.py --checkpoint hand2gripper.pt --input sample.npz
 """
 import os
@@ -23,31 +23,31 @@ import torch
 import cv2
 from typing import Dict
 
-# 假设此脚本与 models 目录在同一级别
+# Assumes this script is at the same level as the models directory
 from .models.simple_pair import Hand2GripperModel
 
 # ------------------------------
-# 可视化工具函数
+# Visualization utility functions
 # ------------------------------
 def vis_selected_gripper(image: np.ndarray, kpts_2d: np.ndarray, gripper_joints_pair: np.ndarray) -> np.ndarray:
     """
-    在图像上绘制选定的夹爪关节点和连线。
+    Draw selected gripper joint points and connecting lines on the image.
     
     Args:
-        image: 原始图像 [H, W, 3]
-        kpts_2d: 2D关键点 [21, 2]
-        gripper_joints_pair: 预测的 (left, right) 索引 [2]
+        image: Original image [H, W, 3]
+        kpts_2d: 2D keypoints [21, 2]
+        gripper_joints_pair: Predicted (left, right) indices [2]
     """
     img_vis = image.copy()
     colors = [(0, 0, 255), (255, 0, 0)]  # Left: Blue, Right: Red
     labels = ["L", "R"]
     
-    # 绘制连线 (left -> right)
+    # Draw connecting line (left -> right)
     left_pt = tuple(kpts_2d[gripper_joints_pair[0]].astype(int))
     right_pt = tuple(kpts_2d[gripper_joints_pair[1]].astype(int))
     cv2.line(img_vis, left_pt, right_pt, (255, 255, 0), 2)  # Cyan
 
-    # 绘制关节点
+    # Draw joint points
     for i, joint_id in enumerate(gripper_joints_pair):
         pt = tuple(kpts_2d[joint_id].astype(int))
         cv2.circle(img_vis, pt, 5, colors[i], -1)
@@ -56,12 +56,12 @@ def vis_selected_gripper(image: np.ndarray, kpts_2d: np.ndarray, gripper_joints_
     return img_vis
 
 # ------------------------------
-# 推理器类
+# Inference class
 # ------------------------------
 class Hand2GripperInference:
     def __init__(self, checkpoint_path: str, device: str = 'cpu'):
         """
-        初始化模型并加载权重。
+        Initialize the model and load weights.
         """
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
@@ -69,7 +69,7 @@ class Hand2GripperInference:
         self.device = torch.device(device)
         self.model = Hand2GripperModel(d_model=256, img_size=256)
         
-        # 使用模型自带的加载函数
+        # Use the model's built-in load function
         self.model._load_checkpoint(checkpoint_path)
         
         self.model.to(self.device)
@@ -80,30 +80,30 @@ class Hand2GripperInference:
     def predict_t(self, color: np.ndarray, bbox: np.ndarray, keypoints_3d: np.ndarray,
                 contact: np.ndarray, is_right: np.ndarray) -> Dict[str, torch.Tensor]:
         """
-        对单个样本执行完整的推理流程。
+        Execute the complete inference pipeline on a single sample.
 
         Args:
-            color (np.ndarray): 原始图像, [H,W,3] 或 [3,H,W], uint8/float
-            bbox (np.ndarray): 边界框, [4]
-            keypoints_3d (np.ndarray): 3D关节点, [21,3]
-            contact (np.ndarray): 接触概率/logits, [21]
-            is_right (np.ndarray): 是否为右手, 标量或 [1]
+            color (np.ndarray): Original image, [H,W,3] or [3,H,W], uint8/float
+            bbox (np.ndarray): Bounding box, [4]
+            keypoints_3d (np.ndarray): 3D keypoints, [21,3]
+            contact (np.ndarray): Contact probabilities/logits, [21]
+            is_right (np.ndarray): Whether this is the right hand, scalar or [1]
 
         Returns:
-            Dict[str, torch.Tensor]: 模型的原始输出字典。
+            Dict[str, torch.Tensor]: The raw output dictionary from the model.
         """
-        # 1. 使用模型内部的读取函数将 numpy 数组转换为 batched tensor
+        # 1. Use the model's internal read functions to convert numpy arrays to batched tensors
         color_t = self.model._read_color(color).to(self.device)
         bbox_t = self.model._read_bbox(bbox).to(self.device)
         kp3d_t = self.model._read_keypoints_3d(keypoints_3d).to(self.device)
         contact_t = self.model._read_contact(contact).to(self.device)
         isright_t = self.model._read_is_right(is_right).to(self.device)
 
-        # 2. 预处理：裁剪和缩放图像
-        # 注意：这一步是在模型外部完成的，与训练脚本保持一致
+        # 2. Preprocessing: crop and resize the image
+        # Note: this step is done outside the model, consistent with the training script
         crop_t = self.model._crop_and_resize(color_t, bbox_t)
 
-        # 3. 模型前向传播
+        # 3. Model forward pass
         outputs = self.model(crop_t, kp3d_t, contact_t, isright_t)
         
         return outputs
@@ -112,83 +112,83 @@ class Hand2GripperInference:
     def predict(self, color: np.ndarray, bbox: np.ndarray, keypoints_3d: np.ndarray,
                 contact: np.ndarray, is_right: np.ndarray) -> Dict[str, torch.Tensor]:
         """
-        对单个样本执行完整的推理流程。
+        Execute the complete inference pipeline on a single sample.
 
         Args:
-            color (np.ndarray): 原始图像, [H,W,3] 或 [3,H,W], uint8/float
-            bbox (np.ndarray): 边界框, [4]
-            keypoints_3d (np.ndarray): 3D关节点, [21,3]
-            contact (np.ndarray): 接触概率/logits, [21]
-            is_right (np.ndarray): 是否为右手, 标量或 [1]
+            color (np.ndarray): Original image, [H,W,3] or [3,H,W], uint8/float
+            bbox (np.ndarray): Bounding box, [4]
+            keypoints_3d (np.ndarray): 3D keypoints, [21,3]
+            contact (np.ndarray): Contact probabilities/logits, [21]
+            is_right (np.ndarray): Whether this is the right hand, scalar or [1]
 
         Returns:
-            np.ndarray: 预测的 (left, right) 关键点索引 [2]
+            np.ndarray: Predicted (left, right) keypoint indices [2]
         """
-        # 1. 使用模型内部的读取函数将 numpy 数组转换为 batched tensor
+        # 1. Use the model's internal read functions to convert numpy arrays to batched tensors
         color_t = self.model._read_color(color).to(self.device)
         bbox_t = self.model._read_bbox(bbox).to(self.device)
         kp3d_t = self.model._read_keypoints_3d(keypoints_3d).to(self.device)
         contact_t = self.model._read_contact(contact).to(self.device)
         isright_t = self.model._read_is_right(is_right).to(self.device)
 
-        # 2. 预处理：裁剪和缩放图像
-        # 注意：这一步是在模型外部完成的，与训练脚本保持一致
+        # 2. Preprocessing: crop and resize the image
+        # Note: this step is done outside the model, consistent with the training script
         crop_t = self.model._crop_and_resize(color_t, bbox_t)
 
-        # 3. 模型前向传播
+        # 3. Model forward pass
         outputs = self.model(crop_t, kp3d_t, contact_t, isright_t)
         
         return outputs['pred_pair'].squeeze().cpu().numpy()
     
     def vis_output(self, image: np.ndarray, kpts_2d: np.ndarray, pred_pair: np.array) -> np.ndarray:
         """
-        可视化模型输出结果。
+        Visualize the model output results.
 
         Args:
-            image (np.ndarray): 原始图像, [H,W,3], uint8
-            kpts_2d (np.ndarray): 2D关节点, [21,2]
-            pred_pair (np.ndarray): 预测的夹爪关节点索引 (left, right), [2]
+            image (np.ndarray): Original image, [H,W,3], uint8
+            kpts_2d (np.ndarray): 2D keypoints, [21,2]
+            pred_pair (np.ndarray): Predicted gripper joint indices (left, right), [2]
 
         Returns:
-            np.ndarray: 带有可视化结果的图像。
+            np.ndarray: Image with visualization results.
         """
         vis_img = vis_selected_gripper(image, kpts_2d, pred_pair)
         return vis_img
 
 # ------------------------------
-# 主函数
+# Main function
 # ------------------------------
 def main(args):
-    # 检查输入文件
+    # Check input file
     if not os.path.exists(args.input):
         raise FileNotFoundError(f"Input data file not found: {args.input}")
 
-    # 设置设备
+    # Set device
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
 
-    # 初始化推理器
+    # Initialize inference engine
     try:
         inference_engine = Hand2GripperInference(args.checkpoint, device=device)
     except Exception as e:
         print(f"Error initializing model: {e}")
         return
 
-    # 加载数据
+    # Load data
     print(f"Loading data from {args.input}...")
     try:
         data = np.load(args.input, allow_pickle=True)
-        # 从 .npz 文件中提取所需数据
+        # Extract required data from .npz file
         color_np = data["img_rgb"]
         bbox_np = data["bbox"]
         kpts_3d_np = data["kpts_3d"]
         contact_np = data["contact_logits"]
         is_right_np = data["is_right"]
-        kpts_2d_np = data["kpts_2d"] # 用于可视化
+        kpts_2d_np = data["kpts_2d"]  # for visualization
     except Exception as e:
         print(f"Error loading data from {args.input}. Ensure it's a valid .npz file with required keys. Error: {e}")
         return
 
-    # 执行推理
+    # Run inference
     outputs = inference_engine.predict(
         color=color_np,
         bbox=bbox_np,
@@ -197,7 +197,7 @@ def main(args):
         is_right=is_right_np
     )
 
-    # 后处理和打印结果
+    # Postprocess and print results
     pred_pair = outputs
     print("\n" + "="*30)
     print("      Inference Result")
@@ -207,10 +207,10 @@ def main(args):
     print(f"  - Right Joint ID: {pred_pair[1]}")
     print("="*30)
 
-    # 可视化
+    # Visualization
     if args.output:
         print(f"\nGenerating visualization and saving to {args.output}...")
-        # 确保图像是 HWC, uint8, BGR 格式给 OpenCV
+        # Ensure image is in HWC, uint8, BGR format for OpenCV
         if color_np.dtype != np.uint8:
             vis_img = (color_np * 255).astype(np.uint8)
         else:
@@ -222,10 +222,10 @@ def main(args):
         # RGB -> BGR for OpenCV
         vis_img = cv2.cvtColor(vis_img, cv2.COLOR_RGB2BGR)
 
-        # 绘制结果
+        # Draw results
         vis_img_result = inference_engine.vis_output(vis_img, kpts_2d_np, pred_pair)
         
-        # 保存图像
+        # Save image
         try:
             cv2.imwrite(args.output, vis_img_result)
             print(f"Visualization saved successfully.")

@@ -21,7 +21,7 @@ The processor follows this pipeline:
 6. Save processed actions for robot execution
 """
 
-import os 
+import os
 import numpy as np
 from typing import Tuple, Optional
 from dataclasses import dataclass
@@ -185,7 +185,7 @@ class ActionProcessor(BaseProcessor):
         # Create and fit hand model to the keypoint sequence
         hand_model = self._get_hand_model_hand2gripper(kpts_3d_rf, sequence.hand_detected, imgs_rgb, bboxes, sequence.contact_logits, hand_side, kpts_3d_cf)
         
-        # 加入对应的可视化代码
+        # Add corresponding visualization code here
         # self.hand2gripper_show_traj(hand_model, 10, title=f"{hand_side.capitalize()} Hand EE Trajectory(v2)")
 
         return EEActions(
@@ -196,17 +196,18 @@ class ActionProcessor(BaseProcessor):
     
     def hand2gripper_show_traj(self, hand_model, interval: int = 10, title: str = None):
         """
-        可视化 Hand2Gripper 的 EE 轨迹（position + orientation）
+        Visualize the Hand2Gripper EE trajectory (position + orientation).
 
-        - 轨迹：黑色折线连接所有点
-        - 坐标系：每隔 interval 帧画一个 3D 坐标轴（R的三列分别当作 x/y/z 轴方向）
-        - 起点：绿色点
-        - 终点：红色叉
+        - Trajectory: black polyline connecting all points
+        - Coordinate frames: draw a 3D coordinate axis every `interval` frames
+          (the three columns of R are used as x/y/z axis directions)
+        - Start point: green dot
+        - End point: red cross
 
         Args:
-            hand_model: 需要包含 ee_pts (N,3) 和 ee_oris (N,3,3)
-            interval: 间隔多少帧画一个坐标系
-            title: 图标题（可选）
+            hand_model: must contain ee_pts (N,3) and ee_oris (N,3,3)
+            interval: number of frames between each drawn coordinate frame
+            title: plot title (optional)
         """
         import numpy as np
         import matplotlib.pyplot as plt
@@ -222,7 +223,7 @@ class ActionProcessor(BaseProcessor):
             print("[hand2gripper_show_traj] Empty trajectory.")
             return
 
-        # 过滤非法点（NaN/Inf）
+        # Filter invalid points (NaN/Inf)
         valid = np.isfinite(pts).all(axis=1)
         pts_v = pts[valid]
         Rs_v  = Rs[valid]
@@ -231,7 +232,7 @@ class ActionProcessor(BaseProcessor):
             print("[hand2gripper_show_traj] All points are invalid (NaN/Inf).")
             return
 
-        # 自动决定坐标轴箭头长度：用轨迹尺度的某个比例
+        # Automatically determine axis arrow length: use a fraction of the trajectory scale
         extent = np.ptp(pts_v, axis=0)  # max-min per axis
         max_range = float(np.max(extent))
         axis_len = (0.08 * max_range) if max_range > 1e-6 else 0.02
@@ -239,14 +240,14 @@ class ActionProcessor(BaseProcessor):
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection="3d")
 
-        # 1) 画轨迹折线
-        ax.plot(pts_v[:, 0], pts_v[:, 1], pts_v[:, 2], linewidth=2)  # 不指定颜色，matplotlib默认即可
+        # 1) Draw trajectory polyline
+        ax.plot(pts_v[:, 0], pts_v[:, 1], pts_v[:, 2], linewidth=2)  # no color specified, use matplotlib default
 
-        # 2) 起点 / 终点
+        # 2) Start / End points
         ax.scatter(pts_v[0, 0],  pts_v[0, 1],  pts_v[0, 2],  s=60, marker="o", label="Start")
         ax.scatter(pts_v[-1, 0], pts_v[-1, 1], pts_v[-1, 2], s=80, marker="x", label="End")
 
-        # 3) 每隔 interval 画一个坐标系
+        # 3) Draw a coordinate frame every `interval` frames
         interval = max(1, int(interval))
         idxs = np.arange(0, len(pts_v), interval)
 
@@ -254,12 +255,12 @@ class ActionProcessor(BaseProcessor):
             p = pts_v[i]
             R = Rs_v[i]
 
-            # 约定：R 的三列分别为 x/y/z 轴在世界坐标（机器人坐标）下的方向
+            # Convention: the three columns of R are the x/y/z axis directions in world (robot) coordinates
             x_axis = R[:, 0]
             y_axis = R[:, 1]
             z_axis = R[:, 2]
 
-            # 画三根轴（这里用常见RGB配色更直观，你也可以去掉颜色参数）
+            # Draw three axes (RGB coloring for clarity; you can also remove the color argument)
             ax.quiver(p[0], p[1], p[2], x_axis[0], x_axis[1], x_axis[2], length=axis_len, normalize=True, color="r")
             ax.quiver(p[0], p[1], p[2], y_axis[0], y_axis[1], y_axis[2], length=axis_len, normalize=True, color="g")
             ax.quiver(p[0], p[1], p[2], z_axis[0], z_axis[1], z_axis[2], length=axis_len, normalize=True, color="b")
@@ -270,13 +271,13 @@ class ActionProcessor(BaseProcessor):
         ax.set_title(title if title is not None else f"EE Trajectory (interval={interval})")
         ax.legend()
 
-        # 4) 等比例显示（两种方式：新版本用 set_box_aspect；否则手动设lim）
+        # 4) Equal-aspect display (two approaches: newer versions use set_box_aspect; otherwise set limits manually)
         try:
             ax.set_box_aspect((1, 1, 1))
         except Exception:
             pass
 
-        # 手动设定等比例范围（更稳）
+        # Manually set equal-aspect range (more robust)
         mins = pts_v.min(axis=0)
         maxs = pts_v.max(axis=0)
         mid = 0.5 * (mins + maxs)
@@ -291,7 +292,7 @@ class ActionProcessor(BaseProcessor):
 
     def _get_hand_model_hand2gripper(self, kpts_3d_rf: np.ndarray, hand_detected: np.ndarray, imgs_rgb: np.ndarray, bboxes: np.ndarray, contact_logits: np.array, hand_side: str, kpts_3d_cf:np.array) -> HandModel | PhysicallyConstrainedHandModel:
         """
-        点都是optical frame下的坐标
+        All keypoints are in the optical frame coordinates.
         """
         # Choose hand model type based on configuration
         if self.constrained_hand:

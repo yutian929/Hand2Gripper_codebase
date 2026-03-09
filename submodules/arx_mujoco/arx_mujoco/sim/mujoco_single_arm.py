@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MuJoCo 单臂可视化脚本
-使用 MuJoCo 3.4.0 读取XML文件，设定关节角度并可视化
+MuJoCo single arm visualization script
+Use MuJoCo 3.4.0 to read XML file, set joint angles and visualize
 """
 
 import mujoco
@@ -15,8 +15,8 @@ from scipy.spatial.transform import Rotation as R
 
 class MujocoSingleArm:
     """
-    MuJoCo 单臂模型封装类
-    支持加载模型、设置关节角度、正向运动学计算、相机渲染和可视化
+    MuJoCo single arm model wrapper class
+    supports loading model, setting joint angles, forward kinematics calculation, camera rendering and visualization
     """
     
     def __init__(self, xml_path: str, verbose: bool = True):
@@ -44,7 +44,7 @@ class MujocoSingleArm:
             jtype = {0: "free", 1: "ball", 2: "slide", 3: "hinge"}[self.model.jnt_type[i]]
             print(f"    Joint {i}: {name} ({jtype})")
     
-    # ==================== 关节操作 ====================
+    # ==================== joint operations ====================
     
     def set_joint_angles(self, angles: np.ndarray):
         angles = np.asarray(angles, dtype=np.float64)
@@ -57,10 +57,10 @@ class MujocoSingleArm:
     def forward(self):
         mujoco.mj_forward(self.model, self.data)
     
-    # ==================== Body位姿查询 ====================
+    # ==================== body pose query ====================
     
     def get_body_pose(self, body_name: str) -> np.ndarray:
-        """获取body的4x4齐次变换矩阵"""
+        """get body's 4x4 homogeneous transformation matrix"""
         body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
         T = np.eye(4, dtype=np.float64)
         T[:3, :3] = self.data.xmat[body_id].reshape(3, 3)
@@ -78,29 +78,29 @@ class MujocoSingleArm:
     
     def set_target_marker(self, pos: np.ndarray, marker_name: str = "target_marker"):
         """
-        设置目标标记点的位置（用于debug可视化）
+        set target marker position (for debug visualization)
         
         Args:
-            pos: 位置 [x, y, z] 或 4x4变换矩阵
-            marker_name: mocap body名称（需在XML中预定义为mocap="true"）
+            pos: position [x, y, z] or 4x4 transformation matrix
+            marker_name: mocap body name (needs to be predefined as mocap="true" in XML)
         """
         body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, marker_name)
         if body_id == -1:
             print(f"[WARN] Marker body '{marker_name}' not found in model.")
             return
         
-        # 获取mocap id
+        # get mocap id
         mocap_id = self.model.body_mocapid[body_id]
         if mocap_id == -1:
             print(f"[WARN] Body '{marker_name}' is not a mocap body.")
             return
         
-        # 支持多种输入格式
+        # support multiple input formats
         if isinstance(pos, np.ndarray):
             if pos.shape == (4, 4):
-                # 4x4变换矩阵
+                # 4x4 transformation matrix
                 self.data.mocap_pos[mocap_id] = pos[:3, 3]
-                # 可选：也设置姿态
+                # optional: also set orientation
                 rot_mat = pos[:3, :3]
                 quat_scipy = R.from_matrix(rot_mat).as_quat()  # [x, y, z, w]
                 self.data.mocap_quat[mocap_id] = [quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]]
@@ -115,11 +115,11 @@ class MujocoSingleArm:
             else:
                 print(f"[WARN] Invalid pos format: {pos.shape}")
         else:
-            # 假设是list或tuple
+            # assume it's list or tuple
             pos = np.array(pos)
             self.data.mocap_pos[mocap_id] = pos[:3]
     
-    # ==================== 相机渲染 ====================
+    # ==================== camera rendering ====================
     
     def init_renderer(self, width: int = 640, height: int = 480):
         self.render_width = width
@@ -128,57 +128,57 @@ class MujocoSingleArm:
     
     def set_camera_pose(self, cam_name: str, T_world_camlink: np.ndarray):
         """
-        设置相机位姿（Link坐标系：X朝前, Y朝左, Z朝上）
+        set camera pose (Link coordinate system: X forward, Y left, Z up)
         
         Args:
-            cam_name: 相机名称（需在XML中预定义）
-            T_world_camlink: 相机在世界坐标系下的4x4变换矩阵
-                            或者 (6,) 的 [x, y, z, roll, pitch, yaw]
+            cam_name: camera name (needs to be predefined in XML)
+            T_world_camlink: camera 4x4 transformation matrix in world coordinate system
+                            or (6,) [x, y, z, roll, pitch, yaw]
         """
         cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
         if cam_id == -1:
             print(f"[WARN] Camera '{cam_name}' not found in model.")
             return
         
-        # 支持两种输入格式
+        # support two input formats
         if T_world_camlink.shape == (6,):
-            # [x, y, z, roll, pitch, yaw] 格式
+            # [x, y, z, roll, pitch, yaw] format
             pos = T_world_camlink[:3]
             r_input = R.from_euler('xyz', T_world_camlink[3:], degrees=False)
             mat_input = r_input.as_matrix()
         elif T_world_camlink.shape == (4, 4):
-            # 4x4矩阵格式
+            # 4x4 matrix format
             pos = T_world_camlink[:3, 3]
             mat_input = T_world_camlink[:3, :3]
         else:
             print(f"[WARN] Invalid pose format: {T_world_camlink.shape}")
             return
         
-        # 设置位置
+        # set position
         self.model.cam_pos[cam_id] = pos
         
-        # Link -> MuJoCo Camera 转换
-        # 参考代码中的转换矩阵（从Link到MuJoCo相机坐标系）
-        # MuJoCo相机: -Z朝前(看向的方向), Y朝上, X朝右
-        # Link: X朝前, Y朝左, Z朝上
-        # 这个矩阵将Link坐标系的点转换到MuJoCo相机坐标系
+        # Link -> MuJoCo Camera conversion
+        # refer to conversion matrix in code (from Link to MuJoCo camera coordinate system)
+        # MuJoCo camera: -Z forward (looking direction), Y up, X right
+        # Link: X forward, Y left, Z up
+        # this matrix converts points from Link coordinate system to MuJoCo camera coordinate system
         mat_link_to_mjcam = np.array([
-            [ 0,  0, -1],  # mjcam X = -link Z? 不对，重新推导
+            [ 0,  0, -1],  # mjcam X = -link Z? wrong, re-derive
             [-1,  0,  0],  # mjcam Y = -link X? 
             [ 0,  1,  0],  # mjcam Z = link Y?
         ], dtype=np.float64)
         
-        # 应用转换: R_world_mjcam = R_world_link @ R_link_mjcam
+        # apply conversion: R_world_mjcam = R_world_link @ R_link_mjcam
         mat_final = mat_input @ mat_link_to_mjcam
         
         r_final = R.from_matrix(mat_final)
         quat_scipy = r_final.as_quat()  # [x, y, z, w]
         
-        # 转换为 MuJoCo 顺序 [w, x, y, z]
+        # convert to MuJoCo order [w, x, y, z]
         self.model.cam_quat[cam_id] = [quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]]
 
     def set_camera_fov(self, cam_name: str, fov_deg: float):
-        """设置相机垂直FOV（度）"""
+        """set camera vertical FOV (degrees)"""
         cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
         if cam_id != -1:
             self.model.cam_fovy[cam_id] = fov_deg
@@ -186,38 +186,38 @@ class MujocoSingleArm:
     def render(self, cam_name: str, width: int = 640, height: int = 480,
                with_mask: bool = False, exclude_geom_names: list = None) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """
-        渲染RGB图像，可选同时返回分割掩码
+        render RGB image, optionally return segmentation mask at the same time
         
         Args:
-            cam_name: 相机名称
-            width: 图像宽度
-            height: 图像高度
-            with_mask: 是否同时返回掩码
-            exclude_geom_names: 要排除的geom名称列表（掩码中不包含这些）
+            cam_name: camera name
+            width: image width
+            height: image height
+            with_mask: whether to return mask at the same time
+            exclude_geom_names: list of geom names to exclude (not included in mask)
         
         Returns:
-            如果 with_mask=False: (rgb, None)
-            如果 with_mask=True:  (rgb, mask)
-            - rgb: RGB图像 (H, W, 3) uint8
-            - mask: 二值掩码 (H, W) uint8, 机械臂区域为255
+            if with_mask=False: (rgb, None)
+            if with_mask=True: (rgb, mask)
+            - rgb: RGB image (H, W, 3) uint8
+            - mask: binary mask (H, W) uint8, robotic arm area is 255
         """
         if self.renderer is None or self.render_width != width or self.render_height != height:
             self.init_renderer(width, height)
         
         cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
         
-        # 渲染RGB
+        # render RGB
         if cam_id != -1:
             self.renderer.update_scene(self.data, camera=cam_name)
         else:
             self.renderer.update_scene(self.data)
         rgb = self.renderer.render().copy()
         
-        # 如果不需要掩码，直接返回
+        # if mask not needed, return directly
         if not with_mask:
             return rgb, None
         
-        # 渲染分割掩码
+        # render segmentation mask
         self.renderer.enable_segmentation_rendering()
         if cam_id != -1:
             self.renderer.update_scene(self.data, camera=cam_name)
@@ -226,22 +226,22 @@ class MujocoSingleArm:
         seg = self.renderer.render().copy()
         self.renderer.disable_segmentation_rendering()
         
-        # 处理分割结果
-        # seg[:,:,0] 是 geom id
+        # process segmentation results
+        # seg[:,:,0] is geom id
         geom_ids = seg[:, :, 0].astype(np.int32)
         
-        # 默认排除的geom
+        # default excluded geoms
         if exclude_geom_names is None:
             exclude_geom_names = ['floor', 'stand']
         
-        # 获取要排除的geom id
-        exclude_ids = set([-1])  # 背景
+        # get geom ids to exclude
+        exclude_ids = set([-1])  # background
         for name in exclude_geom_names:
             gid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
             if gid != -1:
                 exclude_ids.add(gid)
         
-        # 创建掩码：所有非排除的geom都算作机械臂
+        # create mask: all non-excluded geoms are considered robotic arm
         mask = np.zeros((height, width), dtype=np.uint8)
         for gid in np.unique(geom_ids):
             if gid not in exclude_ids and gid >= 0:
@@ -298,23 +298,23 @@ if __name__ == "__main__":
     arm.forward()
     arm.print_body_positions()
     
-    # 测试相机渲染
+        # test camera rendering
     cam_pose = np.array([0.5, 0.0, 0.2, 0.0, 0.0, np.pi])
     arm.set_camera_pose("render_camera", cam_pose)
     arm.set_camera_fov("render_camera", 60.0)
     arm.forward()
     
-    # 渲染RGB和掩码
+        # render RGB and mask
     rgb, mask = arm.render("render_camera", 640, 480, with_mask=True)
     
     print(f"[INFO] RGB shape: {rgb.shape}, Mask shape: {mask.shape}")
     print(f"[INFO] Mask unique values: {np.unique(mask)}")
     
-    # 显示
+    # display
     cv2.imshow("RGB", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
     cv2.imshow("Mask", mask)
     
-    # 叠加显示
+        # overlay display
     overlay = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR).astype(np.float32)
     overlay[mask > 0] = overlay[mask > 0] * 0.5 + np.array([0, 255, 0], dtype=np.float32) * 0.5
     cv2.imshow("Overlay", overlay.astype(np.uint8))
@@ -322,7 +322,7 @@ if __name__ == "__main__":
     cv2.waitKey(0)
     cv2.destroyAllWindows()
     
-    # 测试俯视
+    # test top view
     cam_pose_top = np.array([0.1, 0.0, 0.8, 0.0, np.pi/2, 0.0])
     arm.set_camera_pose("render_camera", cam_pose_top)
     arm.forward()

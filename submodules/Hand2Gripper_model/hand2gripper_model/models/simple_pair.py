@@ -3,33 +3,33 @@
 """
 Hand-to-Gripper (2-finger) Mapping Model (Left/Right Only)
 
-本模型将手部关键点映射到夹爪的左右指尖，不再预测 base 点。
+This model maps hand keypoints to the left and right fingertips of the gripper, no longer predicting the base point.
 
-输入:
-- color:        [B, 3, H, W]    RGB图像
-- bbox:         [B, 4]          手部边界框 [x1,y1,x2,y2]
-- keypoints_3d: [B, 21, 3]      手部3D关键点
-- contact:      [B, 21]         接触概率 (保留参数但不使用)
-- is_right:     [B]             1=右手, 0=左手 (作为特征输入)
+Input:
+- color:        [B, 3, H, W]    RGB image
+- bbox:         [B, 4]          hand bounding box [x1,y1,x2,y2]
+- keypoints_3d: [B, 21, 3]      hand 3D keypoints
+- contact:      [B, 21]         contact probability (parameter retained but not used)
+- is_right:     [B]             1=right hand, 0=left hand (as feature input)
 
-输出:
-- logits_left:  [B,21]          左指尖的边际得分
-- logits_right: [B,21]          右指尖的边际得分
-- S_lr:         [B,21,21]       (left=i, right=j) 成对相容性得分
-- pred_pair:    [B,2]           (i_left*, j_right*) 由联合打分最大化得到
-- img_emb:      [B,D]           图像全局嵌入
-- node_emb:     [B,21,D]        节点嵌入
+Output:
+- logits_left:  [B,21]          marginal score for left fingertip
+- logits_right: [B,21]          marginal score for right fingertip
+- S_lr:         [B,21,21]       (left=i, right=j) pairwise compatibility score
+- pred_pair:    [B,2]           (i_left*, j_right*) obtained by maximizing joint score
+- img_emb:      [B,D]           global image embedding
+- node_emb:     [B,21,D]        node embeddings
 
-关键点归一化流程:
-1. 将掌根(joint 0)移动到原点
-2. 用掌根(0)和四指根部(5,9,13,17)拟合平面，计算掌心法向量
-3. 将法向量旋转到x轴正方向（掌心朝x正向）
-4. 全局尺度归一化（所有点到原点距离的均值为1）
+Keypoint normalization process:
+1. Move wrist (joint 0) to origin
+2. Fit plane using wrist (0) and finger bases (5,9,13,17), compute palm normal
+3. Rotate normal to positive x-axis (palm facing positive x)
+4. Global scale normalization (mean distance of all points to origin is 1)
 
-模型架构:
-- DINOv2Backbone: 使用预训练DINOv2提取图像特征（保留空间维度）
-- HandNodeEncoder: 使用图注意力网络建模手指骨骼连接结构 + Cross-Attention融合图像
-- PairDecoder: 预测 left/right 的边际得分和成对相容性
+Model architecture:
+- DINOv2Backbone: Use pre-trained DINOv2 to extract image features (preserve spatial dimensions)
+- HandNodeEncoder: Use graph attention network to model finger bone connection structure + Cross-Attention to fuse images
+- PairDecoder: Predict marginal scores for left/right and pairwise compatibility
 """
 
 import os
@@ -41,9 +41,9 @@ from typing import Dict, Optional, Tuple
 
 
 # ------------------------------
-# 手部骨骼图结构定义
+# Hand skeleton graph structure definition
 # ------------------------------
-# 21个关键点的连接关系（骨骼边）
+# Connection relationships of 21 keypoints (bone edges)
 # 0: Wrist
 # 1-4: Thumb (CMC, MCP, IP, TIP)
 # 5-8: Index (MCP, PIP, DIP, TIP)
@@ -52,54 +52,54 @@ from typing import Dict, Optional, Tuple
 # 17-20: Pinky (MCP, PIP, DIP, TIP)
 
 HAND_EDGES = [
-    # 拇指
+    # thumb
     (0, 1), (1, 2), (2, 3), (3, 4),
-    # 食指
+    # index finger
     (0, 5), (5, 6), (6, 7), (7, 8),
-    # 中指
+    # middle finger
     (0, 9), (9, 10), (10, 11), (11, 12),
-    # 无名指
+    # ring finger
     (0, 13), (13, 14), (14, 15), (15, 16),
-    # 小指
+    # pinky
     (0, 17), (17, 18), (18, 19), (19, 20),
-    # 掌心横向连接（可选，增强掌心结构）
+    # Palm transverse connections (optional, enhance palm structure)
     (5, 9), (9, 13), (13, 17),
 ]
 
 
 def build_hand_adjacency_matrix(num_joints: int = 21, edges: list = HAND_EDGES, 
                                   self_loop: bool = True) -> torch.Tensor:
-    """构建手部骨骼的邻接矩阵"""
+    """Build adjacency matrix for hand skeleton"""
     adj = torch.zeros(num_joints, num_joints)
     for i, j in edges:
         adj[i, j] = 1.0
-        adj[j, i] = 1.0  # 无向图
+        adj[j, i] = 1.0  # undirected graph
     if self_loop:
         adj = adj + torch.eye(num_joints)
-    # 归一化（对称归一化）
+    # normalization (symmetric normalization)
     deg = adj.sum(dim=1, keepdim=True).clamp(min=1.0)
     adj = adj / deg.sqrt() / deg.sqrt().T
     return adj
 
 
 # ------------------------------
-# DINOv2 视觉骨干
+# DINOv2 Visual Backbone
 # ------------------------------
 class DINOv2Backbone(nn.Module):
     """
-    使用预训练DINOv2提取图像特征
-    输出: 保留空间维度的feature map [B, H', W', D] 和 全局特征 [B, D]
+    Use pre-trained DINOv2 to extract image features
+    Output: feature map preserving spatial dimensions [B, H', W', D] and global features [B, D]
     """
     def __init__(self, model_name: str = "dinov2_vits14", out_dim: int = 256, 
                  freeze_backbone: bool = True):
         super().__init__()
         self.freeze_backbone = freeze_backbone
         
-        # 加载DINOv2模型
+        # load DINOv2 model
         self.dino = torch.hub.load('facebookresearch/dinov2', model_name)
         print(f"Loaded DINOv2 model: {model_name}")
         
-        # DINOv2特征维度
+        # DINOv2 feature dimensions
         if 'vits' in model_name:
             dino_dim = 384
         elif 'vitb' in model_name:
@@ -114,11 +114,11 @@ class DINOv2Backbone(nn.Module):
         self.dino_dim = dino_dim
         self.out_dim = out_dim
         
-        # 投影层
+        # projection layers
         self.proj = nn.Linear(dino_dim, out_dim)
         self.proj_spatial = nn.Conv2d(dino_dim, out_dim, 1)
         
-        # 冻结DINOv2参数
+        # freeze DINOv2 parameters
         if freeze_backbone:
             for param in self.dino.parameters():
                 param.requires_grad = False
@@ -126,14 +126,14 @@ class DINOv2Backbone(nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            x: [B, 3, H, W] 输入图像
+            x: [B, 3, H, W] input image
         Returns:
-            feat_map: [B, H', W', D] 空间特征图
-            feat_global: [B, D] 全局特征
+            feat_map: [B, H', W', D] spatial feature map
+            feat_global: [B, D] global features
         """
         B, C, H, W = x.shape
         
-        # DINOv2期望224x224或能被14整除的尺寸
+        # DINOv2 expects 224x224 or sizes divisible by 14
         if H != 224 or W != 224:
             x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         
@@ -144,15 +144,15 @@ class DINOv2Backbone(nn.Module):
                 patch_tokens = features['x_norm_patchtokens']  # [B, N, D]
                 cls_token = features['x_norm_clstoken']  # [B, D]
             else:
-                # 旧版本API
-                patch_tokens = features[:, 1:, :]  # 去掉CLS token
+                # old version API
+                patch_tokens = features[:, 1:, :]  # remove CLS token
                 cls_token = features[:, 0, :]
         
-        # 重塑为空间维度 (patch_size=14, 224/14=16)
+        # reshape to spatial dimensions (patch_size=14, 224/14=16)
         h = w = 224 // 14  # = 16
         feat_map = patch_tokens.view(B, h, w, self.dino_dim)  # [B, 16, 16, D]
         
-        # 投影
+        # projection
         feat_map_proj = self.proj_spatial(feat_map.permute(0, 3, 1, 2))  # [B, out_dim, 16, 16]
         feat_map_proj = feat_map_proj.permute(0, 2, 3, 1)  # [B, 16, 16, out_dim]
         
@@ -162,10 +162,10 @@ class DINOv2Backbone(nn.Module):
 
 
 # ------------------------------
-# 图注意力层 (Graph Attention)
+# Graph Attention Layer
 # ------------------------------
 class GraphAttentionLayer(nn.Module):
-    """单头图注意力层"""
+    """Single-head graph attention layer"""
     def __init__(self, in_dim: int, out_dim: int, dropout: float = 0.1):
         super().__init__()
         self.W = nn.Linear(in_dim, out_dim, bias=False)
@@ -177,25 +177,25 @@ class GraphAttentionLayer(nn.Module):
     def forward(self, h: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            h: [B, N, in_dim] 节点特征
-            adj: [N, N] 邻接矩阵
+            h: [B, N, in_dim] node features
+            adj: [N, N] adjacency matrix
         Returns:
             h_out: [B, N, out_dim]
         """
         B, N, _ = h.shape
         
-        # 线性变换
+        # linear transformation
         Wh = self.W(h)  # [B, N, out_dim]
         
-        # 计算注意力系数
-        # 拼接每对节点的特征
+        # compute attention coefficients
+        # concatenate features of each node pair
         Wh_repeat_i = Wh.unsqueeze(2).expand(B, N, N, self.out_dim)  # [B, N, N, D]
         Wh_repeat_j = Wh.unsqueeze(1).expand(B, N, N, self.out_dim)  # [B, N, N, D]
         concat = torch.cat([Wh_repeat_i, Wh_repeat_j], dim=-1)  # [B, N, N, 2D]
         
         e = self.leaky_relu(self.a(concat).squeeze(-1))  # [B, N, N]
         
-        # 只在邻接位置计算注意力
+        # compute attention only at adjacent positions
         adj = adj.to(h.device)
         mask = (adj == 0)
         e = e.masked_fill(mask.unsqueeze(0), float('-inf'))
@@ -203,14 +203,14 @@ class GraphAttentionLayer(nn.Module):
         alpha = F.softmax(e, dim=-1)  # [B, N, N]
         alpha = self.dropout(alpha)
         
-        # 加权聚合
+        # weighted aggregation
         h_out = torch.bmm(alpha, Wh)  # [B, N, out_dim]
         
         return h_out
 
 
 class MultiHeadGraphAttention(nn.Module):
-    """多头图注意力"""
+    """Multi-head graph attention"""
     def __init__(self, in_dim: int, out_dim: int, num_heads: int = 4, dropout: float = 0.1):
         super().__init__()
         assert out_dim % num_heads == 0
@@ -226,26 +226,26 @@ class MultiHeadGraphAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
     
     def forward(self, h: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
-        # 多头注意力
+        # multi-head attention
         head_outputs = [head(h, adj) for head in self.heads]
         h_multi = torch.cat(head_outputs, dim=-1)  # [B, N, out_dim]
         
-        # 投影 + 残差
+        # projection + residual
         h_out = self.proj(h_multi)
         h_out = self.dropout(h_out)
         
-        # 如果维度匹配，加残差
+        # if dimensions match, add residual
         if h.shape[-1] == h_out.shape[-1]:
             h_out = h_out + h
         return self.norm(h_out)
 
 
 # ------------------------------
-# Cross-Attention 模块
+# Cross-Attention Module
 # ------------------------------
 class CrossAttention(nn.Module):
     """
-    Cross-Attention: Query来自关节特征，Key/Value来自图像特征图
+    Cross-Attention: Query from joint features, Key/Value from image feature map
     """
     def __init__(self, d_model: int = 256, num_heads: int = 8, dropout: float = 0.1):
         super().__init__()
@@ -274,15 +274,15 @@ class CrossAttention(nn.Module):
     def forward(self, query: torch.Tensor, kv: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            query: [B, N_q, D] 关节特征 (N_q=21)
-            kv: [B, N_kv, D] 图像特征 (N_kv=H'*W')
+            query: [B, N_q, D] joint features (N_q=21)
+            kv: [B, N_kv, D] image features (N_kv=H'*W')
         Returns:
             out: [B, N_q, D]
         """
         B, N_q, D = query.shape
         _, N_kv, _ = kv.shape
         
-        # 投影
+        # projection
         Q = self.q_proj(query).view(B, N_q, self.num_heads, self.head_dim).transpose(1, 2)
         K = self.k_proj(kv).view(B, N_kv, self.num_heads, self.head_dim).transpose(1, 2)
         V = self.v_proj(kv).view(B, N_kv, self.num_heads, self.head_dim).transpose(1, 2)
@@ -297,7 +297,7 @@ class CrossAttention(nn.Module):
         out = out.transpose(1, 2).contiguous().view(B, N_q, D)
         out = self.out_proj(out)
         
-        # 残差 + LayerNorm
+        # residual + LayerNorm
         query = query + self.dropout(out)
         query = self.norm1(query)
         
@@ -309,48 +309,48 @@ class CrossAttention(nn.Module):
 
 
 # ------------------------------
-# 节点特征编码 + Graph Attention + Cross-Attention
+# node features encoding + Graph Attention + Cross-Attention
 # ------------------------------
 class HandNodeEncoder(nn.Module):
     """
-    节点编码器：
-    1. MLP编码节点特征
-    2. Graph Attention建模骨骼结构
-    3. Cross-Attention融合图像特征
-    4. Transformer自注意力
+    Node encoder:
+    1. MLP encode node features
+    2. Graph Attention models bone structure
+    3. Cross-Attention fuses image features
+    4. Transformer self-attention
     """
     def __init__(self, in_dim: int = 26, hidden: int = 256, out_dim: int = 256,
                  num_gat_layers: int = 2, num_cross_attn_layers: int = 2,
                  num_transformer_layers: int = 2, num_heads: int = 8, dropout: float = 0.1):
         super().__init__()
         
-        # 1. 节点特征MLP
+        # 1. node features MLP
         self.node_mlp = nn.Sequential(
             nn.Linear(in_dim, hidden),
             nn.ReLU(inplace=True),
             nn.Linear(hidden, out_dim),
         )
         
-        # 2. 图注意力层（建模骨骼连接）
+        # 2. Graph attention layers (model bone connections)
         self.gat_layers = nn.ModuleList([
             MultiHeadGraphAttention(out_dim, out_dim, num_heads=4, dropout=dropout)
             for _ in range(num_gat_layers)
         ])
         
-        # 3. Cross-Attention层（融合图像特征）
+        # 3. Cross-Attention layers (fuse image features)
         self.cross_attn_layers = nn.ModuleList([
             CrossAttention(d_model=out_dim, num_heads=num_heads, dropout=dropout)
             for _ in range(num_cross_attn_layers)
         ])
         
-        # 4. Transformer自注意力层
+        # 4. Transformer self-attention layers
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=out_dim, nhead=num_heads, dim_feedforward=out_dim * 2,
             batch_first=True, dropout=dropout, activation="gelu"
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_transformer_layers)
         
-        # 预计算邻接矩阵（注册为buffer）
+        # pre-compute adjacency matrix (register as buffer)
         adj = build_hand_adjacency_matrix(21, HAND_EDGES, self_loop=True)
         self.register_buffer('adj', adj)
     
@@ -358,120 +358,120 @@ class HandNodeEncoder(nn.Module):
                 img_feat_global: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
-            node_feats: [B, 21, in_dim] 节点特征
-            img_feat_map: [B, H', W', D] 图像空间特征
-            img_feat_global: [B, D] 全局图像特征（可选）
+            node_feats: [B, 21, in_dim] node features
+            img_feat_map: [B, H', W', D] spatial image features
+            img_feat_global: [B, D] global image features (optional)
         Returns:
             H: [B, 21, out_dim]
         """
         B = node_feats.shape[0]
         
-        # 1. MLP编码
+        # 1. MLP encoding
         H = self.node_mlp(node_feats)  # [B, 21, D]
         
-        # 2. 图注意力（建模骨骼结构）
+        # 2. Graph attention (model bone structure)
         for gat in self.gat_layers:
             H = gat(H, self.adj)  # [B, 21, D]
         
-        # 3. Cross-Attention（融合图像特征）
-        # 将图像特征展平为序列
+        # 3. Cross-Attention (fuse image features)
+        # flatten image features into sequence
         H_img, W_img, D = img_feat_map.shape[1], img_feat_map.shape[2], img_feat_map.shape[3]
         img_seq = img_feat_map.view(B, H_img * W_img, D)  # [B, H'*W', D]
         
         for cross_attn in self.cross_attn_layers:
             H = cross_attn(H, img_seq)  # [B, 21, D]
         
-        # 4. Transformer自注意力
+        # 4. Transformer self-attention
         H = self.transformer(H)  # [B, 21, D]
         
         return H
 
 
 # ------------------------------
-# 成对解码器：left/right 两个查询 + 成对相容性
+# Pair Decoder: left/right two queries + pairwise compatibility
 # ------------------------------
 class PairDecoder(nn.Module):
     """
-    成对解码器 (Pair Decoder)
+    Pair Decoder
     
-    功能：
-    - 预测夹爪左指尖 (left) 和右指尖 (right) 对应的手部关键点
-    - 不再预测 base 点
+    Function:
+    - Predict hand keypoints corresponding to gripper left fingertip (left) and right fingertip (right)
+    - No longer predict base point
     
-    输出：
-    - logits_left:  [B, 21]      每个关键点作为左指尖的边际得分
-    - logits_right: [B, 21]      每个关键点作为右指尖的边际得分  
-    - S_lr:         [B, 21, 21]  成对相容性矩阵 S_lr[i,j] 表示 (left=i, right=j) 的相容性
-    - pred_pair:    [B, 2]       最终预测的 (left_idx, right_idx)
+    Output:
+    - logits_left:  [B, 21]      marginal score for each keypoint as left fingertip
+    - logits_right: [B, 21]      marginal score for each keypoint as right fingertip  
+    - S_lr:         [B, 21, 21]  pairwise compatibility matrix S_lr[i,j] represents compatibility of (left=i, right=j)
+    - pred_pair:    [B, 2]       final predicted (left_idx, right_idx)
     
-    预测方式：
-    - 联合得分 = logits_left[i] + logits_right[j] + S_lr[i,j]
-    - 找到使联合得分最大的 (i, j) 对
+    Prediction method:
+    - Joint score = logits_left[i] + logits_right[j] + S_lr[i,j]
+    - Find the (i, j) pair that maximizes the joint score
     """
     def __init__(self, d_model: int = 256):
         """
-        初始化成对解码器
+        Initialize pair decoder
         
         Args:
-            d_model: 模型隐藏维度，与节点嵌入维度一致
+            d_model: model hidden dimension, consistent with node embeddings dimension
         """
         super().__init__()
         
-        # ====== 两个语义查询向量 ======
-        # q_left: 用于计算每个关键点作为"左指尖"的边际得分
-        # q_right: 用于计算每个关键点作为"右指尖"的边际得分
+        # ====== Two semantic query vectors ======
+        # q_left: used to compute marginal score for each keypoint as "left fingertip"
+        # q_right: used to compute marginal score for each keypoint as "right fingertip"
         self.q_left = nn.Parameter(torch.randn(d_model))
         self.q_right = nn.Parameter(torch.randn(d_model))
         
-        # 初始化查询向量
+        # initialize query vectors
         for q in [self.q_left, self.q_right]:
             nn.init.normal_(q, mean=0.0, std=0.02)
 
-        # ====== 成对相容性双线性矩阵 ======
-        # W_lr: 用于计算 left-right 成对相容性
-        # S_lr[i,j] = H[i] @ W_lr @ H[j].T  表示关键点i作为left、j作为right的相容程度
+        # ====== Pairwise compatibility bilinear matrix ======
+        # W_lr: used to compute left-right pairwise compatibility
+        # S_lr[i,j] = H[i] @ W_lr @ H[j].T represents compatibility degree of keypoint i as left, j as right
         self.W_lr = nn.Parameter(torch.empty(d_model, d_model))
         nn.init.xavier_uniform_(self.W_lr)
 
     def forward(self, H: torch.Tensor):
         """
-        前向传播
+        forward propagation
         
         Args:
-            H: [B, 21, D] 节点嵌入，由 HandNodeEncoder 输出
+            H: [B, 21, D] node embeddings, output from HandNodeEncoder
             
         Returns:
-            logits_left:  [B, 21]     左指尖边际得分
-            logits_right: [B, 21]     右指尖边际得分
-            S_lr:         [B, 21, 21] 成对相容性矩阵
-            pred_pair:    [B, 2]      预测的 (left_idx, right_idx)
+            logits_left:  [B, 21]     left fingertip marginal score
+            logits_right: [B, 21]     right fingertip marginal score
+            S_lr:         [B, 21, 21] pairwise compatibility matrix
+            pred_pair:    [B, 2]      predicted (left_idx, right_idx)
         """
-        B, N, D = H.shape  # B=batch, N=21关键点, D=隐藏维度
+        B, N, D = H.shape  # B=batch, N=21 keypoints, D=hidden dimension
 
-        # ====== Step 1: 计算边际得分 ======
-        # 每个关键点与查询向量做点积，得到该点作为 left/right 的得分
+        # ====== Step 1: Compute marginal scores ======
+        # dot product of each keypoint with query vector to get score as left/right
         logits_left  = torch.einsum('bnd,d->bn', H, self.q_left)   # [B, N]
         logits_right = torch.einsum('bnd,d->bn', H, self.q_right)  # [B, N]
 
-        # ====== Step 2: 计算成对相容性 ======
+        # ====== Step 2: Compute pairwise compatibility ======
         # S_lr[b,i,j] = H[b,i,:] @ W_lr @ H[b,j,:].T
-        # 表示在第b个样本中，关键点i作为left、关键点j作为right的相容程度
+        # represents compatibility degree in sample b of keypoint i as left, j as right
         S_lr = torch.einsum('bnd,de,bme->bnm', H, self.W_lr, H)  # [B, N, N]
 
-        # ====== Step 3: 联合打分找最优配对 ======
+        # ====== Step 3: Joint scoring to find optimal pairing ======
         # comb[i,j] = logits_left[i] + logits_right[j] + S_lr[i,j]
-        # 允许 i=j (同一个关键点同时作为左右指尖)
+        # allow i=j (same keypoint as both left and right fingertips)
         comb = (
             logits_left[:, :, None] +     # [B, N, 1]
             logits_right[:, None, :] +    # [B, 1, N]
             S_lr                          # [B, N, N]
         )  # [B, N, N]
 
-        # 展平后找最大值索引
+        # flatten and find max index
         comb_flat = comb.view(B, -1)             # [B, N^2]
         idx = torch.argmax(comb_flat, dim=1)     # [B]
         
-        # 从展平索引恢复 (i_left, j_right)
+        # recover from flattened index (i_left, j_right)
         i_left = idx // N      # [B]
         j_right = idx % N      # [B]
         pred_pair = torch.stack([i_left, j_right], dim=1)  # [B, 2]
@@ -480,73 +480,73 @@ class PairDecoder(nn.Module):
 
 
 # ------------------------------
-# 顶层模型
+# Top-level Model
 # ------------------------------
 class Hand2GripperModel(nn.Module):
     """
-    Hand2Gripper 主模型 (Left/Right Only)
+    Hand2Gripper main model (Left/Right Only)
     
-    功能：
-    - 将手部3D关键点映射到夹爪的左右指尖
-    - 使用 DINOv2 预训练骨干提取图像特征
-    - 使用图注意力网络建模手指骨骼结构
-    - 使用 Cross-Attention 融合图像特征
+    Function:
+    - Map hand 3D keypoints to gripper left and right fingertips
+    - Use DINOv2 pre-trained backbone to extract image features
+    - Use graph attention network to model finger bone structure
+    - Use Cross-Attention to fuse image features
     
-    架构：
-    1. DINOv2Backbone: 提取图像特征 [B,H',W',D] 和全局特征 [B,D]
-    2. HandNodeEncoder: 编码关节特征，融合图像，输出节点嵌入 [B,21,D]
-    3. PairDecoder: 预测 left/right 的关键点索引
+    Architecture:
+    1. DINOv2Backbone: extract image features [B,H',W',D] and global features [B,D]
+    2. HandNodeEncoder: encode joint features, fuse images, output node embeddings [B,21,D]
+    3. PairDecoder: predict left/right keypoint indices
     
-    输入：
-    - img_crop:     [B, 3, S, S]   裁剪后的手部图像
-    - keypoints_3d: [B, 21, 3]     3D关键点坐标
-    - contact:      [B, 21]        接触概率 (保留但不使用)
-    - is_right:     [B]            是否右手标志
+    Input:
+    - img_crop:     [B, 3, S, S]   cropped hand image
+    - keypoints_3d: [B, 21, 3]     3D keypoint coordinates
+    - contact:      [B, 21]        contact probability (retained but not used)
+    - is_right:     [B]            right hand flag
     
-    输出：
-    - logits_left:  [B, 21]        左指尖边际得分
-    - logits_right: [B, 21]        右指尖边际得分
-    - S_lr:         [B, 21, 21]    成对相容性矩阵
-    - pred_pair:    [B, 2]         预测的 (left_idx, right_idx)
-    - img_emb:      [B, D]         图像全局嵌入
-    - node_emb:     [B, 21, D]     节点嵌入
+    Output:
+    - logits_left:  [B, 21]        left fingertip marginal score
+    - logits_right: [B, 21]        right fingertip marginal score
+    - S_lr:         [B, 21, 21]    pairwise compatibility matrix
+    - pred_pair:    [B, 2]         predicted (left_idx, right_idx)
+    - img_emb:      [B, D]         global image embedding
+    - node_emb:     [B, 21, D]     node embeddings
     """
     def __init__(self, d_model: int = 256, img_size: int = 256,
                  backbone: str = "dinov2_vits14", freeze_backbone: bool = True):
         """
-        初始化模型
+        initialize model
         
         Args:
-            d_model: 模型隐藏维度
-            img_size: 裁剪后的图像尺寸
-            backbone: DINOv2骨干模型名称 ("dinov2_vits14", "dinov2_vitb14", etc.)
-            freeze_backbone: 是否冻结 DINOv2 参数
+            d_model: model hidden dimension
+            img_size: cropped image size
+            backbone: DINOv2 backbone model name ("dinov2_vits14", "dinov2_vitb14", etc.)
+            freeze_backbone: whether to freeze DINOv2 parameters
         """
         super().__init__()
         self.img_size = img_size
-        self.crop_scale = 1.2  # bbox扩展比例
+        self.crop_scale = 1.2  # bbox expansion ratio
         
-        # ====== 视觉骨干 ======
-        # 使用预训练 DINOv2 提取图像特征
+        # ====== Visual Backbone ======
+        # use pre-trained DINOv2 to extract image features
         self.backbone = DINOv2Backbone(
             model_name=backbone, out_dim=d_model, freeze_backbone=freeze_backbone
         )
         
-        # ====== 节点编码器 ======
-        # 融合3D关键点特征和图像特征
+        # ====== Node Encoder ======
+        # fuse 3D keypoint features and image features
         self.encoder = HandNodeEncoder(
             in_dim=26,                    # 3(xyz) + 1(contact) + 21(onehot) + 1(is_right)
             hidden=d_model, 
             out_dim=d_model,
-            num_gat_layers=2,             # 图注意力层数
-            num_cross_attn_layers=2,      # Cross-Attention层数  
-            num_transformer_layers=2,     # Transformer自注意力层数
+            num_gat_layers=2,             # number of graph attention layers
+            num_cross_attn_layers=2,      # number of Cross-Attention layers  
+            num_transformer_layers=2,     # number of Transformer self-attention layers
             num_heads=8, 
             dropout=0.1
         )
         
-        # ====== 成对解码器 ======
-        # 预测 left/right 关键点
+        # ====== Pair Decoder ======
+        # predict left/right keypoints
         self.decoder = PairDecoder(d_model=d_model)
     
     def _load_checkpoint(self, checkpoint_path: str):
@@ -559,34 +559,34 @@ class Hand2GripperModel(nn.Module):
     @staticmethod
     def _normalize_keypoints_xyz(kp3d: torch.Tensor) -> torch.Tensor:
         """
-        手掌姿态归一化：
-        1. 将掌根(0)移动到原点
-        2. 用掌根(0)和四指根部(5,9,13,17)拟合平面，计算法向量
-        3. 将法向量旋转到x轴正方向（掌心朝x正向）
-        4. 全局尺度归一化
+        Hand pose normalization:
+        1. Move wrist (0) to origin
+        2. Fit plane using palm root (0) and four finger bases (5,9,13,17), compute normal vector
+        3. Rotate normal to positive x-axis (palm facing positive x)
+        4. Global scale normalization
         """
         kp = kp3d.clone()
         B = kp.shape[0]
         device = kp.device
         dtype = kp.dtype
 
-        # Step 1: 掌根居中
+        # Step 1: Center palm root
         wrist = kp[:, 0:1, :]  # [B,1,3]
         kp = kp - wrist
 
-        # Step 2: 提取5个关键点拟合平面
-        palm_indices = [0, 5, 9, 13, 17]  # 掌根 + 四指MCP关节
+        # Step 2: Extract 5 keypoints to fit plane
+        palm_indices = [0, 5, 9, 13, 17]  # palm root + four finger MCP joints
         palm_pts = kp[:, palm_indices, :]  # [B,5,3]
 
-        # 计算中心并去中心
+        # compute center and de-center
         palm_center = palm_pts.mean(dim=1, keepdim=True)  # [B,1,3]
         palm_centered = palm_pts - palm_center  # [B,5,3]
 
-        # SVD 找最小特征值对应的特征向量作为法向量
+        # SVD find eigenvector corresponding to smallest eigenvalue as normal vector
         U, S, Vh = torch.linalg.svd(palm_centered, full_matrices=False)  # Vh: [B,3,3]
-        normal = Vh[:, 2, :]  # 最小奇异值对应的右奇异向量，即法向量 [B,3]
+        normal = Vh[:, 2, :]  # right singular vector corresponding to smallest singular value, i.e., normal vector [B,3]
 
-        # Step 3: 确保法向量朝向掌心
+        # Step 3: Ensure normal vector points towards palm
         finger_dir = kp[:, 9, :] - kp[:, 0, :]  # [B,3]
         finger_dir = finger_dir / (finger_dir.norm(dim=1, keepdim=True) + 1e-8)
 
@@ -597,7 +597,7 @@ class Hand2GripperModel(nn.Module):
         dot = (normal * expected_normal).sum(dim=1, keepdim=True)  # [B,1]
         normal = normal * torch.sign(dot + 1e-8)
 
-        # Step 4: 构建旋转矩阵
+        # Step 4: Build rotation matrix
         target = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype)
         target = target.unsqueeze(0).expand(B, 3)
 
@@ -642,7 +642,7 @@ class Hand2GripperModel(nn.Module):
     @staticmethod
     def _build_node_features(kp_xyz_norm: torch.Tensor, contact: torch.Tensor, 
                               is_right: torch.Tensor) -> torch.Tensor:
-        """拼接 [xyz | contact | onehot | is_right] -> [B,21,26]"""
+        """Concatenate [xyz | contact | onehot | is_right] -> [B,21,26]"""
         B, N, _ = kp_xyz_norm.shape
         onehot = torch.eye(N, device=kp_xyz_norm.device).unsqueeze(0).repeat(B, 1, 1)
         contact_f = contact.unsqueeze(-1)
@@ -667,12 +667,12 @@ class Hand2GripperModel(nn.Module):
     
     def _read_color(self, color: np.ndarray) -> torch.Tensor:
         """
-        入: color 可为 [H,W,3] (HWC) 或 [3,H,W] (CHW), uint8 或 float32/64
-        出: [1,3,H,W], float32, 值域 [0,1]
+        Input: color can be [H,W,3] (HWC) or [3,H,W] (CHW), uint8 or float32/64
+        Output: [1,3,H,W], float32, range [0,1]
         """
         if color.ndim != 3:
-            raise ValueError(f"color ndim={color.ndim}, 需要 3 维")
-        # 转 float32 且归一化
+            raise ValueError(f"color ndim={color.ndim}, needs 3 dimensions")
+        # convert to float32 and normalize
         if color.dtype == np.uint8:
             color = color.astype(np.float32) / 255.0
         else:
@@ -683,7 +683,7 @@ class Hand2GripperModel(nn.Module):
         elif color.shape[-1] == 3:                        # HWC -> CHW
             chw = np.transpose(color, (2, 0, 1))
         else:
-            raise ValueError(f"color 形状不合法: {color.shape}, 期望 CHW 或 HWC 且含 3 通道")
+            raise ValueError(f"color shape invalid: {color.shape}, expect CHW or HWC with 3 channels")
 
         chw = np.ascontiguousarray(chw)
         t = torch.from_numpy(chw).unsqueeze(0)            # [1,3,H,W]
@@ -692,30 +692,30 @@ class Hand2GripperModel(nn.Module):
 
     def _read_bbox(self, bbox: np.ndarray) -> torch.Tensor:
         """
-        入: bbox [4] (x1,y1,x2,y2)，任意数值类型
-        出: [1,4] float32
+        Input: bbox [4] (x1,y1,x2,y2), any numeric type
+        Output: [1,4] float32
         """
         bbox = np.asarray(bbox).astype(np.float32, copy=False)
         if bbox.shape != (4,):
-            raise ValueError(f"bbox 形状应为 (4,), 实际 {bbox.shape}")
+            raise ValueError(f"bbox shape should be (4,), actual {bbox.shape}")
         return torch.from_numpy(bbox).unsqueeze(0).float()  # [1,4]
 
 
     def _read_keypoints_3d(self, keypoints_3d: np.ndarray) -> torch.Tensor:
         """
-        入: [21,3] 或 [1,21,3]
-        出: [1,21,3] float32
+        Input: [21,3] or [1,21,3]
+        Output: [1,21,3] float32
         """
         kp = np.asarray(keypoints_3d)
         if kp.ndim == 2:
             if kp.shape != (21, 3):
-                raise ValueError(f"keypoints_3d 形状应为 (21,3)，实际 {kp.shape}")
+                raise ValueError(f"keypoints_3d shape should be (21,3), actual {kp.shape}")
             kp = kp[None, ...]                             # -> [1,21,3]
         elif kp.ndim == 3:
             if kp.shape[1:] != (21, 3) and not (kp.shape[0:3] == (1, 21, 3)):
-                raise ValueError(f"不支持的 keypoints_3d 形状: {kp.shape}")
+                raise ValueError(f"unsupported keypoints_3d shape: {kp.shape}")
         else:
-            raise ValueError(f"keypoints_3d 维度应为 2 或 3，实际 {kp.ndim}")
+            raise ValueError(f"keypoints_3d ndim should be 2 or 3, actual {kp.ndim}")
 
         kp = kp.astype(np.float32, copy=False)
         return torch.from_numpy(kp).float()               # [1,21,3]
@@ -723,26 +723,26 @@ class Hand2GripperModel(nn.Module):
 
     def _read_contact(self, contact: np.ndarray) -> torch.Tensor:
         """
-        入: [21] 或 [1,21]
-        出: [1,21] float32
+        Input: [21] or [1,21]
+        Output: [1,21] float32
         """
         c = np.asarray(contact)
         if c.ndim == 1:
             if c.shape != (21,):
-                raise ValueError(f"contact 形状应为 (21,), 实际 {c.shape}")
+                raise ValueError(f"contact shape should be (21,), actual {c.shape}")
             c = c[None, ...]                               # -> [1,21]
         elif c.ndim == 2 and c.shape[0] == 1 and c.shape[1] == 21:
             pass
         else:
-            raise ValueError(f"不支持的 contact 形状: {c.shape}")
+            raise ValueError(f"unsupported contact shape: {c.shape}")
         c = c.astype(np.float32, copy=False)
         return torch.from_numpy(c).float()                # [1,21]
 
 
     def _read_is_right(self, is_right: np.ndarray) -> torch.Tensor:
         """
-        入: 标量、[1]、或 [B] 的 0/1
-        出: [1] long（模型内部会转 float 拼到特征）
+        Input: scalar, [1], or [B] of 0/1
+        Output: [1] long (internally converted to float and concatenated to features)
         """
         ir = np.asarray(is_right)
         if ir.ndim == 0:
@@ -750,7 +750,7 @@ class Hand2GripperModel(nn.Module):
         elif ir.ndim == 1 and ir.shape[0] == 1:
             pass
         else:
-            raise ValueError(f"is_right 形状应为标量或(1,), 实际 {ir.shape}")
+            raise ValueError(f"is_right shape should be scalar or (1,), actual {ir.shape}")
         ir = ir.astype(np.int64, copy=False)
         return torch.from_numpy(ir)                        # [1], long
 
@@ -777,66 +777,66 @@ class Hand2GripperModel(nn.Module):
     def forward(self, img_crop: torch.Tensor, keypoints_3d: torch.Tensor,
                 contact: torch.Tensor, is_right: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
-        模型前向传播
+        model forward propagation
         
         Args:
-            img_crop:     [B, 3, S, S]   裁剪并resize后的手部图像
-            keypoints_3d: [B, 21, 3]     手部3D关键点坐标
-            contact:      [B, 21]        接触概率 (保留接口但不使用)
-            is_right:     [B]            是否右手 (1=右手, 0=左手)
+            img_crop:     [B, 3, S, S]   cropped and resized hand image
+            keypoints_3d: [B, 21, 3]     hand 3D keypoint coordinates
+            contact:      [B, 21]        contact probability (interface retained but not used)
+            is_right:     [B]            whether right hand (1=right, 0=left)
             
         Returns:
-            dict: 包含以下键值:
-                - logits_left:  [B, 21]      左指尖边际得分
-                - logits_right: [B, 21]      右指尖边际得分
-                - S_lr:         [B, 21, 21]  成对相容性矩阵
-                - pred_pair:    [B, 2]       预测的 (left_idx, right_idx)
-                - img_emb:      [B, D]       图像全局嵌入
-                - node_emb:     [B, 21, D]   节点嵌入
+            dict: containing the following keys:
+                - logits_left:  [B, 21]      left fingertip marginal score
+                - logits_right: [B, 21]      right fingertip marginal score
+                - S_lr:         [B, 21, 21]  pairwise compatibility matrix
+                - pred_pair:    [B, 2]       predicted (left_idx, right_idx)
+                - img_emb:      [B, D]       global image embedding
+                - node_emb:     [B, 21, D]   node embeddings
         """
-        # ====== Step 1: 提取图像特征 ======
-        # img_feat_map: [B, H', W', D] 空间特征图，用于 Cross-Attention
-        # img_emb: [B, D] 全局特征，用于输出
+        # ====== Step 1: Extract Image Features ======
+        # img_feat_map: [B, H', W', D] spatial feature map, used for Cross-Attention
+        # img_emb: [B, D] global features, used for output
         img_feat_map, img_emb = self.backbone(img_crop)
 
-        # ====== Step 2: 关键点归一化与节点特征构建 ======
-        # 将3D关键点归一化到统一坐标系
+        # ====== Step 2: Keypoint Normalization and Node Features Construction ======
+        # normalize 3D keypoints to unified coordinate system
         kp_xyz_norm = self._normalize_keypoints_xyz(keypoints_3d)
-        # 拼接节点特征: [xyz | contact | onehot | is_right]
+        # concatenate node features: [xyz | contact | onehot | is_right]
         node_feats = self._build_node_features(kp_xyz_norm, contact, is_right)
 
-        # ====== Step 3: 编码 ======
-        # 通过图注意力 + Cross-Attention + Transformer 得到节点嵌入
+        # ====== Step 3: Encoding ======
+        # get node embeddings through graph attention + Cross-Attention + Transformer
         H = self.encoder(node_feats, img_feat_map, img_emb)  # [B, 21, D]
 
-        # ====== Step 4: 解码 ======
-        # 预测 left/right 的关键点索引
+        # ====== Step 4: Decoding ======
+        # predict left/right keypoint indices
         logits_left, logits_right, S_lr, pred_pair = self.decoder(H)
 
         return {
-            "logits_left": logits_left,     # [B, 21] 左指尖边际得分
-            "logits_right": logits_right,   # [B, 21] 右指尖边际得分
-            "S_lr": S_lr,                   # [B, 21, 21] 成对相容性
-            "pred_pair": pred_pair,         # [B, 2] 预测的 (left, right)
-            "img_emb": img_emb,             # [B, D] 图像嵌入
-            "node_emb": H,                  # [B, 21, D] 节点嵌入
+            "logits_left": logits_left,     # [B, 21] left fingertip marginal score
+            "logits_right": logits_right,   # [B, 21] right fingertip marginal score
+            "S_lr": S_lr,                   # [B, 21, 21] pairwise compatibility
+            "pred_pair": pred_pair,         # [B, 2] predicted (left, right)
+            "img_emb": img_emb,             # [B, D] image embedding
+            "node_emb": H,                  # [B, 21, D] node embeddings
         }
 
 
 # ------------------------------
-# 可视化工具
+# Visualization Tools
 # ------------------------------
 def visualize_hand_keypoints(kp_before: np.ndarray, kp_after: np.ndarray, 
                               title: str = "Hand Keypoints Normalization",
                               save_path: str = None):
     """
-    可视化手部关键点归一化前后的对比
+    Visualize comparison of hand keypoints before and after normalization
     
     Args:
-        kp_before: [21, 3] 归一化前的关键点
-        kp_after:  [21, 3] 归一化后的关键点
-        title: 图表标题
-        save_path: 保存路径，None则显示
+        kp_before: [21, 3] keypoints before normalization
+        kp_after:  [21, 3] keypoints after normalization
+        title: chart title
+        save_path: save path, None to display
     """
     import matplotlib.pyplot as plt
     
@@ -906,7 +906,7 @@ def _set_axes_equal(ax):
 
 
 # ------------------------------
-# 演示
+# Demo
 # ------------------------------
 if __name__ == "__main__":
     import argparse
@@ -916,14 +916,14 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, default="", help="Path to model checkpoint")
     parser.add_argument("--save_vis", type=str, default=None, help="Path to save visualization")
     parser.add_argument("--use_random", action="store_true", help="Use random data instead of npz file")
-    parser.add_argument("--no_freeze_backbone", action="store_true", help="不冻结DINOv2参数")
+    parser.add_argument("--no_freeze_backbone", action="store_true", help="do not freeze DINOv2 parameters")
     args = parser.parse_args()
     
     torch.manual_seed(0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
-    # 初始化模型（默认使用DINOv2并冻结参数）
+    # initialize model (default uses DINOv2 and freezes parameters)
     model = Hand2GripperModel(
         d_model=256, img_size=256, 
         freeze_backbone=not args.no_freeze_backbone
@@ -932,7 +932,7 @@ if __name__ == "__main__":
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     
-    # 加载checkpoint
+    # load checkpoint
     if args.checkpoint and os.path.exists(args.checkpoint):
         print(f"Loading checkpoint from {args.checkpoint}")
         model._load_checkpoint(args.checkpoint)
@@ -979,7 +979,7 @@ if __name__ == "__main__":
         contact_t = model._read_contact(contact_logits).to(device)
         is_right_t = model._read_is_right(is_right).to(device)
 
-    # ===== 可视化归一化效果 =====
+    # ===== Visualize Normalization Effect =====
     print("="*80)
     print("Visualizing keypoints normalization...")
     kp_before = kpts_3d if kpts_3d.ndim == 2 else kpts_3d[0]  # [21,3]
@@ -990,7 +990,7 @@ if __name__ == "__main__":
         save_path=args.save_vis
     )
 
-    # ===== 模型推理 =====
+    # ===== Model Inference =====
     print("="*80)
     print("Running model inference...")
     with torch.no_grad():
@@ -1001,12 +1001,12 @@ if __name__ == "__main__":
     print(f"Predicted (left, right): {pred_pair}")
     
     if has_gt:
-        gt_lr = gt_blr[1:]  # 取 left, right 部分
+        gt_lr = gt_blr[1:]  # take left, right part
         print(f"Ground truth (left, right): {gt_lr}")
         match = np.array_equal(pred_pair, gt_lr)
         print(f"Match: {match}")
 
-    # 打印各logits的top-3
+    # print top-3 for each logit
     print("-"*80)
     print("Top-3 predictions for each role:")
     for role, key in [("Left", "logits_left"), ("Right", "logits_right")]:

@@ -34,7 +34,7 @@ class Hand2GripperAnnotator(BaseProcessor):
     """
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.last_chosen_gripper_joints_seq = [0, 0, 0]  # 初始化为无效值
+        self.last_chosen_gripper_joints_seq = [0, 0, 0]  # Initialize to invalid values
 
     def process_one_demo(self, data_sub_folder: str) -> None:
         """

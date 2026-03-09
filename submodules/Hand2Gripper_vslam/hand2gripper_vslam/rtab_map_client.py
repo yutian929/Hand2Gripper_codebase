@@ -256,7 +256,7 @@ if __name__ == "__main__":
         
         # Wait until "finished" appears in the output
         # Based on your log: "[INFO] [player_mapper_masker-2]: process has finished cleanly"
-        # or "播放结束"
+        # or "playback finished"
         target_text = ">>> VSLAM PLAYBACK COMPLETE <<<" 
         
         client.wait_for_text(process, target_text, timeout=300)

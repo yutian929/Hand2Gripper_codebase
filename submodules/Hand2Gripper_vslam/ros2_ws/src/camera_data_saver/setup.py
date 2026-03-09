@@ -22,7 +22,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'camera_data_saver = camera_data_saver.camera_data_saver:main',  # 确保入口是正确的
+            'camera_data_saver = camera_data_saver.camera_data_saver:main',  # ensure the entry point is correct
         ],
     },
 )

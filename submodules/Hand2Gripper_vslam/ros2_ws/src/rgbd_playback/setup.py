@@ -12,8 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        # ------------------- 新增下面这一行 -------------------
-        # 意思：把 'launch' 文件夹下的所有 .py 文件，安装到 'share/包名/launch' 目录下
+        # ------------------- Add the following line -------------------
+        # Meaning: Install all .py files in the 'launch' folder to 'share/package_name/launch' directory
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         # -----------------------------------------------------
     ],
@@ -30,7 +30,7 @@ setup(
         'console_scripts': [
             'player = rgbd_playback.player_node:main',
             'player_mapper = rgbd_playback.player_mapper_node:main',
-            'player_mapper_masker = rgbd_playback.player_mapper_masker_node:main',  # 新增的可执行文件
+            'player_mapper_masker = rgbd_playback.player_mapper_masker_node:main',  # newly added executable file
         ],
     },
 )

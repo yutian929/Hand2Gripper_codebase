@@ -12,17 +12,17 @@ arm_config: Dict[str, Any] = {
 }
 single_arm = SingleArm(arm_config)
 
-# 用curses捕获键盘输入
+# use curses to capture keyboard input
 def keyboard_control(stdscr):
 
-    curses.curs_set(0)  # 不显示光标
-    stdscr.nodelay(1)   # 设置为非阻塞模式
-    stdscr.timeout(10)  # 设置读取键盘的超时
+    curses.curs_set(0)  # do not display cursor
+    stdscr.nodelay(1)   # set to non-blocking mode
+    stdscr.timeout(10)  # set keyboard read timeout
     global target_pose
-    curses.mousemask(0)  # 禁用鼠标事件
+    curses.mousemask(0)  # disable mouse events
     xyzrpy = np.zeros(6)
     gripper =0
-    # “热爱无需多言"
+    # “love needs no words"
     big_text = [
         "  AAAAA        RRRRR         X   X     ",
         " A     A       R    R         X X      ",
@@ -33,84 +33,84 @@ def keyboard_control(stdscr):
     ]
     
     while True:
-        key = stdscr.getch()  # 获取键盘输入
+        key = stdscr.getch()  # get keyboard input
         stdscr.clear()
-        # 对每个返回值中的元素进行格式化
+        # format each element in the return value
         ee_pose = single_arm.get_ee_pose_xyzrpy()
         joint_pos = single_arm.get_joint_positions()
         joint_vel = single_arm.get_joint_velocities()
         joint_curr = single_arm.get_joint_currents()
 
-        # 格式化并显示
+        # format and display
         stdscr.addstr(0, 0, f"EE_POSE: [{' '.join([f'{val:.3f}' for val in ee_pose])}]")
         stdscr.addstr(2, 0, f"JOINT_POS: [{' '.join([f'{val:.3f}' for val in joint_pos])}]")
         stdscr.addstr(4, 0, f"JOINT_VEL: [{' '.join([f'{val:.3f}' for val in joint_vel])}]")
         stdscr.addstr(6, 0, f"JOINT_CURR: [{' '.join([f'{val:.3f}' for val in joint_curr])}]")
         
-        if key == ord('q'):  # 按 'q' 退出程序
+        if key == ord('q'):  # press 'q' to exit program
             break
-        if key == -1:  # 按 'q' 退出程序
+        if key == -1:  # press 'q' to exit program
             continue     
         elif key == ord('i'): 
             single_arm.gravity_compensation()
             value=single_arm.get_ee_pose_xyzrpy()
 
         elif key == ord('w'): 
-            xyzrpy[0] += 0.005  # 机械臂前移
+            xyzrpy[0] += 0.005  # arm move forward
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('s'): 
-            xyzrpy[0] -= 0.005  # 机械臂后移
+            xyzrpy[0] -= 0.005  # arm move backward
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('a'):
-            xyzrpy[1] += 0.005  # 机械臂左移
+            xyzrpy[1] += 0.005  # arm move left
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('d'):  
-            xyzrpy[1] -= 0.005  # 机械臂右移
+            xyzrpy[1] -= 0.005  # arm move right
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == curses.KEY_UP: 
-            xyzrpy[2] += 0.005  # 机械臂上移
+            xyzrpy[2] += 0.005  # arm move up
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == curses.KEY_DOWN: 
-            xyzrpy[2] -= 0.005  # 机械臂下移
+            xyzrpy[2] -= 0.005  # arm move down
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == curses.KEY_LEFT: 
-            xyzrpy[1] += 0.005  # 机械臂左移
+            xyzrpy[1] += 0.005  # arm move left
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)  
         elif key == curses.KEY_RIGHT: 
-             xyzrpy[1] -= 0.005  # 机械臂右移
+             xyzrpy[1] -= 0.005  # arm move right
              single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)  
         elif key == ord(','): 
-            xyzrpy[5] += 0.02  # 机械臂yaw减少
+            xyzrpy[5] += 0.02  # arm yaw decrease
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('/'): 
-            xyzrpy[5] -= 0.02  # 机械臂yaw增加
+            xyzrpy[5] -= 0.02  # arm yaw increase
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('m'): 
-            xyzrpy[3] += 0.02  # 机械臂roll增加
+            xyzrpy[3] += 0.02  # arm roll increase
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('n'): 
-            xyzrpy[3] -= 0.02  # 机械臂roll减少
+            xyzrpy[3] -= 0.02  # arm roll decrease
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('l'): 
-            xyzrpy[4] += 0.02  # 机械臂pitch增加
+            xyzrpy[4] += 0.02  # arm pitch increase
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('.'): 
-            xyzrpy[4] -= 0.02  # 机械臂pitch减少
+            xyzrpy[4] -= 0.02  # arm pitch decrease
             single_arm.set_ee_pose_xyzrpy(xyzrpy=xyzrpy)
         elif key == ord('c'): 
-            gripper -= 0.2  # 闭合
+            gripper -= 0.2  # close
             single_arm.set_catch_pos(pos=gripper)
         elif key == ord('o'): 
-            gripper += 0.2  # 张开
+            gripper += 0.2  # open
             single_arm.set_catch_pos(pos=gripper)
         elif key == ord('r'): 
             xyzrpy = np.zeros(6)
             single_arm.go_home()
-            print('回到原点\n')
+            print('return to origin\n')
 
         # height, width = stdscr.getmaxyx()
 
-        # 更新屏幕显示当前目标位姿
+        # update screen to display current target pose
         # stdscr.addstr(0, 0, f"Current Target Pose: {xyzrpy}")
         # for i, line in enumerate(big_text):
         #     stdscr.addstr(height // 2 - 3 + i, (width - len(line)) // 2, line)

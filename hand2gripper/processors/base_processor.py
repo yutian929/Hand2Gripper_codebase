@@ -94,7 +94,7 @@ class BaseProcessor:
         # Get all folders in data_folder
         try:
             all_data_folders = [d1 for d1 in os.listdir(self.data_folder) if os.path.isdir(os.path.join(self.data_folder, d1))]
-            # 不再强制要求文件夹名为数字，直接按字符串排序
+            # Folder names are no longer required to be numeric; sort as strings directly
             self.all_data_folders = sorted(all_data_folders)
             self.all_data_folders_idx = {x: idx for idx, x in enumerate(self.all_data_folders)}
         except OSError as e:

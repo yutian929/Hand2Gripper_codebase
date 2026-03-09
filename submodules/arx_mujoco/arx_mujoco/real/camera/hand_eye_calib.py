@@ -8,29 +8,29 @@ import cv2
 import pyrealsense2 as rs
 from scipy.spatial.transform import Rotation as R
 from scipy.optimize import least_squares
-import os  # 新增
+import os  # new addition
 
 # =========================
-# 1) ArUco 参数（按你的）
+# 1) ArUco parameters (as per yours)
 # =========================
 MARKER_SIZE = 0.05                 # 50mm -> meters
 MARKER_DICT = cv2.aruco.DICT_4X4_50
 MARKER_ID = 0
 
 # =========================
-# 2) 机械臂接口（按你工程里的用法）
+# 2) Robotic arm interface (as per your project's usage)
 # =========================
 from bimanual import SingleArm
 
 # =========================
-# 2.5) Free-drag 配置（新增）
+# 2.5) Free-drag configuration (new addition)
 # =========================
-# 有些控制器需要更高频的 gravity_compensation 才“够泄力”
-# 你的摄像头循环大约 30Hz；如果感觉泄力不够，可以把这里调到 2~5
+# Some controllers need higher frequency gravity_compensation to be "sufficiently compliant"
+# your camera loop is about 30Hz; if gravity compensation feels insufficient, you can adjust this to 2~5
 GC_REPEAT_PER_LOOP = 1
 
 # =========================
-# 3) SE(3) 4x4 工具
+# 3) SE(3) 4x4 tools
 # =========================
 def T_from_Rt(Rm, t):
     T = np.eye(4, dtype=np.float64)
@@ -57,14 +57,14 @@ def make_valid_rotation(T):
     return T2
 
 def rvec_tvec_to_T_cam_marker(rvec, tvec):
-    # solvePnP 输出 rvec/tvec: X_cam = R * X_marker + t  (marker -> cam)
+    # solvePnP output rvec/tvec: X_cam = R * X_marker + t  (marker -> cam)
     Rm = R.from_rotvec(np.asarray(rvec, dtype=np.float64).reshape(3)).as_matrix()
     return T_from_Rt(Rm, np.asarray(tvec, dtype=np.float64).reshape(3))
 
 def pose_to_T_base_flange(xyzrpy, degrees: bool, mode: str):
     """
     xyzrpy: [x, y, z, roll, pitch, yaw]
-    mode 用来尝试不同欧拉组合：
+    mode is used to try different Euler combinations:
       - "xyz_rpy": R = from_euler('xyz', [roll,pitch,yaw])
       - "zyx_ypr": R = from_euler('zyx', [yaw,pitch,roll])
     """
@@ -80,16 +80,16 @@ def pose_to_T_base_flange(xyzrpy, degrees: bool, mode: str):
     return T_from_Rt(Rm, [x, y, z])
 
 # =========================
-# 4) solvePnP 估 ArUco 位姿（OpenCV 4.12 兼容）
+# 4) solvePnP estimate ArUco pose (OpenCV 4.12 compatible)
 # =========================
 def estimate_pose_from_aruco_corners(corner_4x2, marker_size, K, dist):
     """
-    corner_4x2: (4,2) 图像角点 (来自 detectMarkers)
-    返回 rvec,tvec，使得 marker -> cam
+    corner_4x2: (4,2) image corners (from detectMarkers)
+    return rvec,tvec, such that marker -> cam
     """
     L = float(marker_size)
 
-    # 假设 detectMarkers 给角点顺序：左上, 右上, 右下, 左下
+    # assume detectMarkers gives corner order: top-left, top-right, bottom-right, bottom-left
     objp = np.array([
         [-L/2,  L/2, 0.0],
         [ L/2,  L/2, 0.0],
@@ -106,7 +106,7 @@ def estimate_pose_from_aruco_corners(corner_4x2, marker_size, K, dist):
     return rvec.reshape(3), tvec.reshape(3)
 
 # =========================
-# 5) 同时解 X,Y： A_i Y = X B_i
+# 5) Solve X,Y simultaneously: A_i Y = X B_i
 # =========================
 def se3vec_to_T(v6):
     v6 = np.asarray(v6, dtype=np.float64).reshape(6)
@@ -121,14 +121,14 @@ def solve_XY(A_list, B_list, w_trans=5.0, loss="huber"):
     A_list = [make_valid_rotation(np.asarray(A, np.float64)) for A in A_list]
     B_list = [make_valid_rotation(np.asarray(B, np.float64)) for B in B_list]
 
-    x0 = np.zeros(12, dtype=np.float64)  # X(6)+Y(6) 初值单位阵
+    x0 = np.zeros(12, dtype=np.float64)  # X(6)+Y(6) initial identity matrix
 
     def residuals(x):
         X = se3vec_to_T(x[0:6])   # T_base_cam
         Y = se3vec_to_T(x[6:12])  # T_flange_marker
         res = []
         for A, B in zip(A_list, B_list):
-            E = T_inv(X @ B) @ (A @ Y)  # 理想=I
+            E = T_inv(X @ B) @ (A @ Y)  # ideal=I
             r_err = R.from_matrix(E[:3, :3]).as_rotvec()
             t_err = E[:3, 3]
             res.append(np.hstack([r_err, w_trans * t_err]))
@@ -155,7 +155,7 @@ def evaluate(A_list, B_list, X, Y):
 
 def try_solve_with_best_pose_convention(raw_ee_list, B_list):
     """
-    自动尝试：度/弧度 + 两种常见欧拉组合，选残差更小的。
+    Auto try: degrees/radians + two common Euler combinations, choose the one with smaller residual.
     """
     candidates = []
     raw_max = float(np.max(np.abs(np.array(raw_ee_list)[:, 3:])))
@@ -172,7 +172,7 @@ def try_solve_with_best_pose_convention(raw_ee_list, B_list):
     return candidates[0]
 
 # =========================
-# 6) 只在 OpenCV 画面上叠字显示 ee_pose（按你要求）
+# 6) Only overlay text display of ee_pose on OpenCV screen (as per your request)
 # =========================
 def draw_text(vis, lines, org=(10, 90), scale=0.6, thickness=2, color=(255, 255, 255), line_gap=26):
     x, y = org
@@ -182,7 +182,7 @@ def draw_text(vis, lines, org=(10, 90), scale=0.6, thickness=2, color=(255, 255,
 
 def get_T_link_optical():
     """
-    返回从 Optical Frame 到 Link Frame 的变换矩阵 T_link_optical
+    return transformation matrix from Optical Frame to Link Frame T_link_optical
     P_link = T_link_optical @ P_optical
     
     Standard ROS convention:
@@ -205,16 +205,16 @@ def get_T_link_optical():
     return T
 
 # =========================
-# 7) 主程序：D435采图 + ArUco检测 + Free-drag + 采集/解算
+# 7) Main program: D435 image capture + ArUco detection + Free-drag + collection/solving
 # =========================
 def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
     print("Connecting arm...")
     arm = SingleArm({"can_port": can_port, "type": type})
 
     print("\n========================================")
-    print("  机械臂进入【重力补偿模式】(free-drag)")
-    print("  请用手拖动机械臂到不同姿态采样")
-    print("  按键：SPACE=保存样本  S=保存图片  C=解算  Q=退出")
+    print("  robotic arm enters [gravity compensation mode] (free-drag)")
+    print("  please manually drag the robotic arm to different poses for sampling")
+    print("  keys: SPACE=save sample  S=save image  C=solve  Q=quit")
     print("========================================\n")
 
     print("Starting RealSense D435...")
@@ -223,7 +223,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
     cfg.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
     profile = pipe.start(cfg)
 
-    # RealSense 内参
+    # RealSense intrinsics
     color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
     intr = color_profile.get_intrinsics()
     K = np.array([[intr.fx, 0, intr.ppx],
@@ -248,7 +248,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
 
     try:
         while True:
-            # --- Free-drag: 必须循环调用以保持泄力状态 :contentReference[oaicite:1]{index=1} ---
+            # --- Free-drag: must call in loop to maintain gravity compensation state :contentReference[oaicite:1]{index=1} ---
             for _ in range(GC_REPEAT_PER_LOOP):
                 arm.gravity_compensation()
 
@@ -260,7 +260,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
             img = np.asanyarray(color.get_data())
             vis = img.copy()
 
-            # 读当前 ee_pose（用于叠字显示，也用于按 S 保存）
+            # read current ee_pose (for text overlay display, also for saving with S)
             try:
                 last_ee = np.array(arm.get_ee_pose_xyzrpy(), dtype=np.float64)
                 last_ee_ts = time.time()
@@ -286,7 +286,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
                         found = True
                         cv2.drawFrameAxes(vis, K, dist, rvec_sel, tvec_sel, 0.04)
 
-            # --- 叠字（只做 text overlay） ---
+            # --- Text overlay (only text overlay) ---
             lines = [
                 f"samples={len(B_list)}   [SPACE]save  [S]screenshot  [C]calib  [Q]quit",
                 f"aruco(ID={MARKER_ID})={'OK' if found else 'NO'}",
@@ -294,7 +294,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
             if last_ee is not None:
                 xyz = last_ee[:3]
                 rpy = last_ee[3:]
-                # 同时显示“当作度”的版本，方便肉眼判断
+                # Also display version "as degrees" for easy visual judgment
                 rpy_deg = rpy * 180.0 / np.pi if np.max(np.abs(rpy)) <= 6.5 else rpy
                 lines += [
                     f"EE xyz: [{xyz[0]: .4f}, {xyz[1]: .4f}, {xyz[2]: .4f}] (m)",
@@ -314,13 +314,13 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
             if key in [ord('q'), ord('Q')]:
                 break
 
-            # 按空格键保存样本数据
+            # press spacebar to save sample data
             if key == ord(' '):
                 if not found:
-                    print("[WARN] 没看到目标 ArUco，无法保存。")
+                    print("[WARN] target ArUco not seen, cannot save.")
                     continue
                 if last_ee is None:
-                    print("[WARN] 未读到 ee_pose，无法保存。")
+                    print("[WARN] ee_pose not read, cannot save.")
                     continue
 
                 B = rvec_tvec_to_T_cam_marker(rvec_sel, tvec_sel)
@@ -328,7 +328,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
                 B_list.append(B)
                 print(f"[OK] saved #{len(B_list)}  ee={np.round(last_ee,4)}  tvec={np.round(tvec_sel,4)}")
 
-            # 按's'键保存当前可视化图片
+            # press 's' key to save current visualization image
             if key in [ord('s'), ord('S')]:
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 img_filename = f"calib_screenshot_annotated_{timestamp}.png"
@@ -339,7 +339,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
 
             if key in [ord('c'), ord('C')]:
                 if len(B_list) < 10:
-                    print(f"[WARN] 样本太少({len(B_list)}张)：至少需要10帧，无法计算。")
+                    print(f"[WARN] too few samples ({len(B_list)}): at least 10 frames needed, cannot calculate.")
                     continue
 
                 print("\n[INFO] Solving (auto-try pose convention)...")
@@ -351,7 +351,7 @@ def main(file_name="eye_to_hand_result_right.json", can_port="can3", type=0):
                 print("\n=== X = T_base_cam (cam_optical -> base) ===\n", X)
                 print("\n=== Y = T_flange_marker (marker on flange) ===\n", Y)
                 
-                # --- 计算 T_base_link ---
+                # --- Calculate T_base_link ---
                 T_link_optical = get_T_link_optical()
                 T_base_link = X @ np.linalg.inv(T_link_optical)
                 print("\n=== T_base_link (camera_link -> base) ===\n", T_base_link)

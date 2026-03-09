@@ -7,23 +7,23 @@ CAN_INTERFACE="can5"
 
 
 start_can() {
-    echo "启动 slcand..."
+    echo "Starting slcand..."
     sudo slcand -o -f -s8 $CAN_DEVICE $CAN_INTERFACE
     if [ $? -ne 0 ]; then
-        echo "slcand 启动失败"
+        echo "slcand startup failed"
         return 1
     fi
-    echo "配置 $CAN_INTERFACE 接口..."
+    echo "Configuring $CAN_INTERFACE interface..."
 
 
     sudo slcand -o -f -s8 $CAN_DEVICE $CAN_INTERFACE
     sudo ifconfig $CAN_INTERFACE up
     
     if [ $? -ne 0 ]; then
-        echo "启动 $CAN_INTERFACE 接口失败：RTNETLINK answers: Operation not supported"
+        echo "Failed to start $CAN_INTERFACE interface: RTNETLINK answers: Operation not supported"
         return 1
     fi
-    echo "$CAN_INTERFACE 启动成功"
+    echo "$CAN_INTERFACE started successfully"
     return 0
 }
 
@@ -45,17 +45,17 @@ while true; do
 
     if check_can; then
 
-        echo "CAN 接口 $CAN_INTERFACE 正常工作"
+        echo "CAN interface $CAN_INTERFACE working normally"
     else
 
-        echo "$CAN_INTERFACE 掉线，重启中..."
+        echo "$CAN_INTERFACE offline, restarting..."
         
         sudo ip link set $CAN_INTERFACE down
         sudo pkill -9 slcand  
         sleep 1  
 
         if ! start_can; then
-            echo "重启 CAN 接口失败，请检查硬件或驱动。"
+            echo "Failed to restart CAN interface, please check hardware or driver."
 
         fi
     fi

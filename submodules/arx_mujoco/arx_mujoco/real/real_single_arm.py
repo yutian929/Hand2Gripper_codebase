@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-真实单臂控制器
-坐标系说明：
-- flange_init: 机械臂零位时法兰盘的坐标系（与bimanual的FK/IK一致）
-- flange: 当前法兰盘坐标系
-- gripper: 夹爪坐标系（在flange的X轴方向偏移GRIPPER_OFFSET）
+real single arm controller
+Coordinate system explanation:
+- flange_init: flange coordinate system when arm is at zero position (consistent with bimanual FK/IK)
+- flange: current flange coordinate system
+- gripper: gripper coordinate system (offset in flange X-axis direction by GRIPPER_OFFSET)
 """
 
 import time
@@ -17,7 +17,7 @@ from scipy.spatial.transform import Rotation as R
 from bimanual import SingleArm
 
 
-# 默认夹爪校准数据
+# default gripper calibration data
 DEFAULT_GRIPPER_CALIBRATION = {
     -1.0: {"mean": 0.0}, -0.5: {"mean": 0.0}, 0.0: {"mean": 0.0},
     0.5: {"mean": 4.0}, 1.0: {"mean": 12.5}, 1.5: {"mean": 20.5},
@@ -26,29 +26,29 @@ DEFAULT_GRIPPER_CALIBRATION = {
     5.0: {"mean": 82.0}
 }
 
-# 夹爪偏移（末端执行器相对于法兰盘，在法兰盘X轴方向）
+# gripper offset (end-effector relative to flange, in flange X-axis direction)
 GRIPPER_OFFSET = np.array([0.16, 0.0, 0.0])
 
 
 class RealSingleArm:
     """
-    真实单臂控制器
+    real single arm controller
     
-    所有位姿都在 flange_init 坐标系下表示（与bimanual的FK/IK一致）
+    all poses are represented in flange_init coordinate system (consistent with bimanual FK/IK)
     """
     
     def __init__(self, can_port: str = 'can0', arm_type: int = 0, 
                  calib_path: str = "gripper_calibration.json",
                  max_velocity: int = 200, max_acceleration: int = 500):
         """
-        初始化单臂控制器
+        initialize single arm controller
         
         Args:
-            can_port: CAN端口名称
-            arm_type: 机械臂类型ID
-            calib_path: 夹爪校准文件路径
-            max_velocity: 最大速度 (50-500，越小越慢)
-            max_acceleration: 最大加速度 (100-2000，越小越平滑)
+            can_port: CAN port name
+            arm_type: arm type ID
+            calib_path: gripper calibration file path
+            max_velocity: maximum speed (50-500, smaller is slower)
+            max_acceleration: maximum acceleration (100-2000, smaller is smoother)
         """
         self.config = {
             "can_port": can_port, 
@@ -61,7 +61,7 @@ class RealSingleArm:
         self.calib_points = self._load_calibration(calib_path)
     
     def _load_calibration(self, calib_path: str) -> List:
-        """加载夹爪校准数据"""
+        """load gripper calibration data"""
         calib_data = DEFAULT_GRIPPER_CALIBRATION
         if os.path.exists(calib_path):
             try:
@@ -74,7 +74,7 @@ class RealSingleArm:
         return points
     
     def _real_to_set_width(self, real_mm: float) -> float:
-        """真实宽度(mm) -> 设定值"""
+        """real width (mm) -> set value"""
         if not self.calib_points:
             return real_mm
         pts = self.calib_points
@@ -91,24 +91,24 @@ class RealSingleArm:
     
     def set_speed(self, max_velocity: int = 200, max_acceleration: int = 500):
         """
-        设置运动速度和加速度
+        set movement speed and acceleration
         
         Args:
-            max_velocity: 最大速度 (建议50-500)
-            max_acceleration: 最大加速度 (建议100-2000)
+            max_velocity: maximum speed (recommended 50-500)
+            max_acceleration: maximum acceleration (recommended 100-2000)
         """
         self.arm.set_speed(max_velocity, max_acceleration)
     
-    # ==================== 坐标变换工具 ====================
+    # ==================== coordinate transformation tools ====================
     
     @staticmethod
     def T_to_xyzrpy(T: np.ndarray) -> np.ndarray:
-        """4x4矩阵 -> [x, y, z, roll, pitch, yaw]"""
+        """4x4 matrix -> [x, y, z, roll, pitch, yaw]"""
         return np.concatenate([T[:3, 3], R.from_matrix(T[:3, :3]).as_euler('xyz')])
     
     @staticmethod
     def xyzrpy_to_T(xyzrpy: np.ndarray) -> np.ndarray:
-        """[x, y, z, roll, pitch, yaw] -> 4x4矩阵"""
+        """[x, y, z, roll, pitch, yaw] -> 4x4 matrix"""
         T = np.eye(4)
         T[:3, 3] = xyzrpy[:3]
         T[:3, :3] = R.from_euler('xyz', xyzrpy[3:]).as_matrix()
@@ -117,7 +117,7 @@ class RealSingleArm:
     @staticmethod
     def gripper_to_flange(T_ref_gripper: np.ndarray) -> np.ndarray:
         """
-        夹爪位姿 -> 法兰盘位姿
+        gripper pose -> flange pose
         T_ref_flange = T_ref_gripper @ inv(T_flange_gripper)
         """
         T_flange_gripper = np.eye(4)
@@ -127,35 +127,35 @@ class RealSingleArm:
     @staticmethod
     def flange_to_gripper(T_ref_flange: np.ndarray) -> np.ndarray:
         """
-        法兰盘位姿 -> 夹爪位姿
+        flange pose -> gripper pose
         T_ref_gripper = T_ref_flange @ T_flange_gripper
         """
         T_flange_gripper = np.eye(4)
         T_flange_gripper[:3, 3] = GRIPPER_OFFSET
         return T_ref_flange @ T_flange_gripper
     
-    # ==================== 位姿读取 ====================
+    # ==================== pose reading ====================
     
     def go_home(self):
-        """回零位"""
+        """go to zero position"""
         self.arm.go_home()
     
     def get_joint_positions(self) -> np.ndarray:
-        """获取当前关节位置 (弧度)，Shape: (7,)->(6,)"""
+        """get current joint positions (radians), Shape: (7,)->(6,)"""
         return self.arm.get_joint_positions()[:6]
     
     def get_gripper_width(self, teacher=False) -> float:
         """
-        获取当前夹爪宽度 (单位: 米)
-        gripper_joint为电机位置，需通过calib_points线性插值得到实际宽度
+        get current gripper width (unit: meters)
+        gripper_joint is motor position, need linear interpolation through calib_points to get actual width
         """
         gripper_joint = self.arm.get_joint_positions()[6]
         pts = self.calib_points
         # pts: List of (real_mm, set_val)
-        # 反向插值: 已知set_val, 求real_mm
+        # reverse interpolation: known set_val, find real_mm
         if not pts:
             return gripper_joint / 1000.0  # fallback
-        pts = sorted(pts, key=lambda x: x[1])  # 按set_val排序
+        pts = sorted(pts, key=lambda x: x[1])  # sort by set_val
         if gripper_joint <= pts[0][1]:
             width_mm = pts[0][0]
         elif gripper_joint >= pts[-1][1]:
@@ -170,69 +170,69 @@ class RealSingleArm:
             else:
                 width_mm = pts[-1][0]
         if teacher:
-            width_mm = width_mm*0.082/0.016  # 教师臂特殊处理
-        return width_mm / 1000.0  # 返回米
+            width_mm = width_mm*0.082/0.016  # special handling for teacher arm
+        return width_mm / 1000.0  # return meters
     
     def get_flange_pose(self) -> np.ndarray:
         """
-        获取当前法兰盘位姿 (4x4)
-        返回 T_flange_init_flange（在flange_init坐标系下的当前法兰盘位姿）
+        get current flange pose (4x4)
+        return T_flange_init_flange (current flange pose in flange_init coordinate system)
         """
         xyzrpy = self.arm.get_ee_pose_xyzrpy()
         return self.xyzrpy_to_T(xyzrpy)
     
     def get_gripper_pose(self) -> np.ndarray:
         """
-        获取当前夹爪位姿 (4x4)
-        返回 T_flange_init_gripper（在flange_init坐标系下的当前夹爪位姿）
+        get current gripper pose (4x4)
+        return T_flange_init_gripper (current gripper pose in flange_init coordinate system)
         """
         return self.flange_to_gripper(self.get_flange_pose())
     
-    # ==================== 位姿控制 ====================
+    # ==================== pose control ====================
 
     def set_joint_positions(self, positions: np.ndarray):
         """
-        设置关节位置
+        set joint positions
         
         Args:
-            positions: 目标关节位置 (弧度)，Shape: (6,)
+            positions: target joint positions (radians), Shape: (6,)
         """
         self.arm.set_joint_positions(positions)
     
     def set_flange_pose(self, T_flange_init_flange: np.ndarray):
         """
-        设置法兰盘目标位姿
+        set flange target pose
         
         Args:
-            T_flange_init_flange: 法兰盘在flange_init坐标系下的目标位姿 (4x4)
+            T_flange_init_flange: target pose of flange in flange_init coordinate system (4x4)
         """
         xyzrpy = self.T_to_xyzrpy(T_flange_init_flange)
         self.arm.set_ee_pose_xyzrpy(xyzrpy)
     
     def set_gripper_pose(self, T_flange_init_gripper: np.ndarray):
         """
-        设置夹爪目标位姿（自动转换为法兰盘位姿）
+        set gripper target pose (automatically convert to flange pose)
         
         Args:
-            T_flange_init_gripper: 夹爪在flange_init坐标系下的目标位姿 (4x4)
+            T_flange_init_gripper: target pose of gripper in flange_init coordinate system (4x4)
         """
         T_flange_init_flange = self.gripper_to_flange(T_flange_init_gripper)
         self.set_flange_pose(T_flange_init_flange)
     
     def set_gripper_width(self, width_m: float):
-        """设置夹爪宽度 (真实宽度m)"""
-        set_val = self._real_to_set_width(width_m * 1000)  # 转为mm
+        """set gripper width (real width m)"""
+        set_val = self._real_to_set_width(width_m * 1000)  # convert to mm
         self.arm.set_catch_pos(set_val)
     
     def move_to(self, T_flange_init_ee: np.ndarray, gripper_width_m: float = 0.030, 
                 is_gripper_pose: bool = True):
         """
-        移动到目标位姿
+        move to target pose
         
         Args:
-            T_flange_init_ee: 目标位姿 (4x4)，在flange_init坐标系下
-            gripper_width_mm: 夹爪宽度 (mm)
-            is_gripper_pose: True=输入是夹爪位姿，False=输入是法兰盘位姿
+            T_flange_init_ee: target pose (4x4), in flange_init coordinate system
+            gripper_width_mm: gripper width (mm)
+            is_gripper_pose: True=input is gripper pose, False=input is flange pose
         """
         if is_gripper_pose:
             self.set_gripper_pose(T_flange_init_ee)
@@ -244,13 +244,13 @@ class RealSingleArm:
                            gripper_widths: Optional[List[float]] = None,
                            is_gripper_pose: bool = True, dt: float = 0.1):
         """
-        执行轨迹
+        execute trajectory
         
         Args:
-            poses: 位姿列表 (4x4矩阵)，在flange_init坐标系下
-            gripper_widths: 夹爪宽度列表 (mm)，None则保持30mm
-            is_gripper_pose: 是否为夹爪位姿
-            dt: 控制周期 (秒)
+            poses: pose list (4x4 matrices), in flange_init coordinate system
+            gripper_widths: gripper width list (mm), None keeps 30mm
+            is_gripper_pose: whether it is gripper pose
+            dt: control period (seconds)
         """
         n = len(poses)
         if gripper_widths is None:
@@ -273,17 +273,17 @@ class RealSingleArm:
 
 
 if __name__ == "__main__":
-    # 使用较慢的速度初始化
+    # initialize with slower speed
     arm = RealSingleArm(can_port='can3', max_velocity=100, max_acceleration=300)
-    print("进入重力补偿模式...")
+    print("entering gravity compensation mode...")
     arm.arm.gravity_compensation()
-    print("开始读取夹爪宽度 (mm)，按 Ctrl+C 退出")
+    print("start reading gripper width (mm), press Ctrl+C to exit")
     try:
         while True:
             width = arm.get_gripper_width()
             print(f"Gripper width: {width:.4f} m", end='\r')
             time.sleep(0.05)
     except KeyboardInterrupt:
-        print("\n退出。")
+        print("\nExit.")
     
-    # 从臂都是0.082， 主臂can0却0.016
+    # follower arms are all 0.082, but master arm can0 is 0.016

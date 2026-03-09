@@ -5,7 +5,7 @@ import numpy as np
 def test_single_arm(single_arm0: SingleArm, single_arm1: SingleArm):
     #single_arm.go_home()
     while(1):
-        xyzrpy = np.array([0.0, 0.0, 0.1,0.0, 0.0, 0.0])  # x, y, z 位置
+        xyzrpy = np.array([0.0, 0.0, 0.1,0.0, 0.0, 0.0])  # x, y, z position
 
         success = single_arm0.set_ee_pose_xyzrpy(xyzrpy)
         success = single_arm1.set_ee_pose_xyzrpy(xyzrpy)
@@ -16,8 +16,8 @@ def test_single_arm(single_arm0: SingleArm, single_arm1: SingleArm):
         #print(single_arm0.get_ee_pose())
         #print(single_arm0.get_joint_positions())
 
-        #positions = [0.5, 1.0, -0.5]  # 指定每个关节的位置
-        #joint_names = ["joint1", "joint2", "joint3"]  # 对应关节的名称
+        #positions = [0.5, 1.0, -0.5]  # specify position for each joint
+        #joint_names = ["joint1", "joint2", "joint3"]  # corresponding joint names
 
         #success = single_arm0.set_joint_positions(positions=positions, joint_names=joint_names)
 

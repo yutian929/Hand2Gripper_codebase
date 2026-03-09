@@ -7,27 +7,27 @@ import arx_r5_python as arx
 
 def quaternion_to_euler(quat: np.ndarray) -> Tuple[float, float, float]:
     """
-    将四元数转换为欧拉角（roll, pitch, yaw）
-    参数：
-        quat: np.ndarray, 长度为 4 的数组 [w, x, y, z]
-    返回：
-        roll, pitch, yaw: 以弧度为单位的欧拉角
+    convert quaternion to Euler angles (roll, pitch, yaw)
+    Parameters:
+        quat: np.ndarray, array of length 4 [w, x, y, z]
+    Returns:
+        roll, pitch, yaw: Euler angles in radians
     """
     w, x, y, z = quat
 
-    # 计算 roll (x 轴旋转)
+    # calculate roll (x-axis rotation)
     sinr_cosp = 2 * (w * x + y * z)
     cosr_cosp = 1 - 2 * (x * x + y * y)
     roll = np.arctan2(sinr_cosp, cosr_cosp)
 
-    # 计算 pitch (y 轴旋转)
+    # calculate pitch (y-axis rotation)
     sinp = 2 * (w * y - z * x)
     if abs(sinp) >= 1:
-        pitch = np.pi / 2 * np.sign(sinp)  # 使用 90 度限制
+        pitch = np.pi / 2 * np.sign(sinp)  # use 90 degree limit
     else:
         pitch = np.arcsin(sinp)
 
-    # 计算 yaw (z 轴旋转)
+    # calculate yaw (z-axis rotation)
     siny_cosp = 2 * (w * z + x * y)
     cosy_cosp = 1 - 2 * (y * y + z * z)
     yaw = np.arctan2(siny_cosp, cosy_cosp)
@@ -37,15 +37,15 @@ def quaternion_to_euler(quat: np.ndarray) -> Tuple[float, float, float]:
 
 def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> np.ndarray:
     """
-    将欧拉角（roll, pitch, yaw）转换为四元数。
+    Convert Euler angles (roll, pitch, yaw) to quaternion.
 
-    参数：
-        roll: 绕 x 轴的旋转角（弧度）
-        pitch: 绕 y 轴的旋转角（弧度）
-        yaw: 绕 z 轴的旋转角（弧度）
+    Parameters:
+        roll: rotation angle around x-axis (radians)
+        pitch: rotation angle around y-axis (radians)
+        yaw: rotation angle around z-axis (radians)
 
-    返回：
-        np.ndarray: 长度为 4 的四元数数组 [w, x, y, z]
+    Returns:
+        np.ndarray: quaternion array of length 4 [w, x, y, z]
     """
     cy = np.cos(yaw * 0.5)
     sy = np.sin(yaw * 0.5)
@@ -90,20 +90,20 @@ class SingleArm:
             urdf_path = os.path.join(current_dir,"R5_master.urdf")
         self.arm = arx.InterfacesPy(urdf_path,config.get("can_port", "can0"),type)
         
-        # 使用配置中的速度参数，默认较慢的速度
-        max_vel = config.get("max_velocity", 200)      # 默认200，原来是500
-        max_acc = config.get("max_acceleration", 500)  # 默认500，原来是2000
+        # use speed parameters from config, default slower speed
+        max_vel = config.get("max_velocity", 200)      # default 200, originally 500
+        max_acc = config.get("max_acceleration", 500)  # default 500, originally 2000
         step = config.get("step", 10)
         self.arm.arx_x(max_vel, max_acc, step)
 
     def set_speed(self, max_velocity: int = 200, max_acceleration: int = 500, step: int = 10):
         """
-        设置机械臂运动速度和加速度
+        set robotic arm movement speed and acceleration
         
         Args:
-            max_velocity: 最大速度 (建议50-500，越小越慢)
-            max_acceleration: 最大加速度 (建议100-2000，越小越平滑)
-            step: 步进参数
+            max_velocity: maximum speed (recommended 50-500, smaller is slower)
+            max_acceleration: maximum acceleration (recommended 100-2000, smaller is smoother)
+            step: step parameter
         """
         self.arm.arx_x(max_velocity, max_acceleration, step)
         print(f"[SingleArm] Speed set: vel={max_velocity}, acc={max_acceleration}, step={step}")
@@ -252,6 +252,6 @@ class SingleArm:
         return xyzrpy
 
     def __del__(self):
-        # 或者可以直接在析构函数中释放资源
-        print("销毁 SingleArm 对象")
+        # or can directly release resources in destructor
+        print("destroy SingleArm object")
         #self.cleanup()

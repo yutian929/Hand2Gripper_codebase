@@ -180,15 +180,15 @@ class RobotInpaintProcessor(BaseProcessor):
                 import mediapy as media
                 from scipy.spatial.transform import Rotation as R
                 
-                # 使用 arx_mujoco 的模块
+                # Use arx_mujoco modules
                 from arx_mujoco.real.camera.camera_utils import load_camera_intrinsics, load_eye_to_hand_matrix, T_optical_to_link
                 from arx_mujoco.real2sim import Real2Sim
                 
-                # 1. 加载相机参数和手眼标定矩阵
+                # 1. Load camera parameters and hand-eye calibration matrix
                 T_flange_init_camlink_L = load_eye_to_hand_matrix(self.eye_to_hand_left)
                 T_flange_init_camlink_R = load_eye_to_hand_matrix(self.eye_to_hand_right)
                 
-                # 2. 加载轨迹数据
+                # 2. Load trajectory data
                 path_l = str(paths.actions_left)
                 path_r = str(paths.actions_right)
                 if not os.path.exists(path_l):
@@ -205,25 +205,25 @@ class RobotInpaintProcessor(BaseProcessor):
                     path_l = path_l.replace(".npz", "_shoulders.npz")
                     path_r = path_r.replace(".npz", "_shoulders.npz")
 
-                # 辅助函数：将 pose (6D) 转换为 4x4 矩阵
+                # Helper function: convert pose (6D) to 4x4 matrix
                 def pose_to_matrix(pose: np.ndarray) -> np.ndarray:
-                    """将 [x, y, z, rx, ry, rz] 转换为 4x4 变换矩阵"""
+                    """Convert [x, y, z, rx, ry, rz] to 4x4 transformation matrix"""
                     T = np.eye(4)
                     T[:3, 3] = pose[:3]
                     T[:3, :3] = R.from_euler('xyz', pose[3:6]).as_matrix()
                     return T
 
                 def matrix_to_pose(T: np.ndarray) -> np.ndarray:
-                    """将 4x4 变换矩阵转换为 [x, y, z, rx, ry, rz]"""
+                    """Convert 4x4 transformation matrix to [x, y, z, rx, ry, rz]"""
                     pos = T[:3, 3]
                     euler = R.from_matrix(T[:3, :3]).as_euler('xyz')
                     return np.concatenate([pos, euler])
 
-                # 读取并转换轨迹 (相机光学坐标系下的 6D pose)
+                # Load and convert trajectories (6D pose in camera optical frame)
                 try:
                     data_L = np.load(path_l)
                     data_R = np.load(path_r)
-                    # 尝试读取 ee_pts 和 ee_oris 格式
+                    # Try to load ee_pts and ee_oris format
                     if "ee_pts" in data_L and "ee_oris" in data_L:
                         def convert_to_matrix(ee_pts, ee_oris):
                             T_list = []
@@ -236,12 +236,12 @@ class RobotInpaintProcessor(BaseProcessor):
                         T_cam_ee_L_list = convert_to_matrix(data_L["ee_pts"], data_L["ee_oris"])
                         T_cam_ee_R_list = convert_to_matrix(data_R["ee_pts"], data_R["ee_oris"])
                     else:
-                        # 尝试其他格式
+                        # Try other formats
                         seqs_L_cam = data_L["poses"] if "poses" in data_L else data_L["trajectory"]
                         seqs_R_cam = data_R["poses"] if "poses" in data_R else data_R["trajectory"]
                         T_cam_ee_L_list = [pose_to_matrix(p) for p in seqs_L_cam]
                         T_cam_ee_R_list = [pose_to_matrix(p) for p in seqs_R_cam]
-                    # === 新增: optical -> link 坐标系转换 ===
+                    # === New: optical -> link frame conversion ===
                     T_opt2link = T_optical_to_link()
                     T_cam_ee_L_list = [T_opt2link @ T for T in T_cam_ee_L_list]
                     T_cam_ee_R_list = [T_opt2link @ T for T in T_cam_ee_R_list]
@@ -249,21 +249,21 @@ class RobotInpaintProcessor(BaseProcessor):
                     print(f"Error loading trajectory data: {e}")
                     return
 
-                # 3. 转换到 flange_init 坐标系 (用于保存训练数据)
+                # 3. Convert to flange_init frame (for saving training data)
                 # T_flange_init_ee = T_flange_init_camlink @ T_camlink_ee
-                # 注意：这里 T_cam_ee 实际上是 T_camlink_ee (相机link坐标系)
+                # Note: T_cam_ee here is actually T_camlink_ee (camera link frame)
                 T_flange_init_ee_L_list = [T_flange_init_camlink_L @ T for T in T_cam_ee_L_list]
                 T_flange_init_ee_R_list = [T_flange_init_camlink_R @ T for T in T_cam_ee_R_list]
                 
-                # 保存 flange_init 坐标系下的轨迹 (用于训练)
+                # Save trajectory in the flange_init frame (for training)
                 np.save(str(paths.hand2gripper_train_base_L_T_ee_L), np.array(T_flange_init_ee_L_list))
                 np.save(str(paths.hand2gripper_train_base_R_T_ee_R), np.array(T_flange_init_ee_R_list))
 
-                # 4. 加载视频和夹爪数据
+                # 4. Load video and gripper data
                 rgbs_inpaint = media.read_video(str(paths.video_human_inpaint))
                 rgbs_inpaint = rgbs_inpaint[frame_indices]
                 
-                # 加载标准数据以获取 gripper widths
+                # Load standard data to get gripper widths
                 print("Loading gripper widths...")
                 data_standard = self._load_data(paths)
                 gripper_actions, gripper_widths = self._process_gripper_widths(paths, data_standard)
@@ -273,25 +273,25 @@ class RobotInpaintProcessor(BaseProcessor):
                 np.save(str(paths.hand2gripper_train_gripper_width_left), width_L)
                 np.save(str(paths.hand2gripper_train_gripper_width_right), width_R)
 
-                # 验证数据长度一致
+                # Verify data lengths are consistent
                 num_frames = len(frame_indices)
                 assert len(rgbs_inpaint) == num_frames, f"Video frames mismatch: {len(rgbs_inpaint)} vs {num_frames}"
                 assert len(T_cam_ee_L_list) == num_frames, f"Left trajectory mismatch: {len(T_cam_ee_L_list)} vs {num_frames}"
                 assert len(T_cam_ee_R_list) == num_frames, f"Right trajectory mismatch: {len(T_cam_ee_R_list)} vs {num_frames}"
                 assert len(width_L) == num_frames, f"Left gripper width mismatch: {len(width_L)} vs {num_frames}"
                 # breakpoint()
-                # 5. 创建 Real2Sim 渲染器 (左臂和右臂各一个)
+                # 5. Create Real2Sim renderers (one for left arm and one for right arm)
                 sample_img = rgbs_inpaint[0]
                 img_h, img_w = sample_img.shape[:2]
                 
-                # 获取相机 fov
+                # Get camera fov
                 _, _, _, v_fov = load_camera_intrinsics(self.camera_intrinsics)
                 
-                # XML 路径 (单臂模型)
+                # XML path (single-arm model)
                 xml_path_L = getattr(self, 'xml_path', "./submodules/arx_mujoco/SDK/R5a/meshes/R5a_R5master.xml")
                 xml_path_R = getattr(self, 'xml_path', "./submodules/arx_mujoco/SDK/R5a/meshes/R5a_R5master.xml")
                 
-                print(f"[INFO] 初始化左臂 Real2Sim: {xml_path_L}")
+                print(f"[INFO] Initializing left-arm Real2Sim: {xml_path_L}")
                 r2s_L = Real2Sim(
                     xml_path=xml_path_L,
                     T_flange_init_camlink=T_flange_init_camlink_L,
@@ -301,7 +301,7 @@ class RobotInpaintProcessor(BaseProcessor):
                     verbose=False
                 )
                 
-                print(f"[INFO] 初始化右臂 Real2Sim: {xml_path_R}")
+                print(f"[INFO] Initializing right-arm Real2Sim: {xml_path_R}")
                 r2s_R = Real2Sim(
                     xml_path=xml_path_R,
                     T_flange_init_camlink=T_flange_init_camlink_R,
@@ -311,16 +311,16 @@ class RobotInpaintProcessor(BaseProcessor):
                     verbose=False
                 )
 
-                # 6. 批量渲染
-                print("[INFO] 渲染左臂轨迹...")
+                # 6. Batch rendering
+                print("[INFO] Rendering left-arm trajectory...")
                 results_L = r2s_L.render_batch(T_camlink_ee_list=T_cam_ee_L_list, gripper_widths=width_L, is_gripper_pose=True, show_progress=True)
-                print(f"[INFO] 左臂渲染完成，IK失败: {sum(1 for r in results_L if not r.ik_success)}/{len(results_L)}")
+                print(f"[INFO] Left-arm rendering done, IK failures: {sum(1 for r in results_L if not r.ik_success)}/{len(results_L)}")
                 
-                print("[INFO] 渲染右臂轨迹...")
+                print("[INFO] Rendering right-arm trajectory...")
                 results_R = r2s_R.render_batch(T_camlink_ee_list=T_cam_ee_R_list, gripper_widths=width_R, is_gripper_pose=True, show_progress=True)
-                print(f"[INFO] 右臂渲染完成，IK失败: {sum(1 for r in results_R if not r.ik_success)}/{len(results_R)}")
+                print(f"[INFO] Right-arm rendering done, IK failures: {sum(1 for r in results_R if not r.ik_success)}/{len(results_R)}")
                 
-                # 7. 合成图像并生成 Sequence
+                # 7. Composite images and build Sequence
                 sequence = TrainingDataSequence()
 
                 for idx in tqdm(range(num_frames), desc="Compositing frames"):
@@ -328,10 +328,10 @@ class RobotInpaintProcessor(BaseProcessor):
                     res_L = results_L[idx]
                     res_R = results_R[idx]
 
-                    # 合成：先叠加右臂，再叠加左臂（或根据深度排序）
+                    # Composite: overlay right arm first, then left arm (or sort by depth)
                     blended = rgb_h.copy()
                     
-                    # 叠加右臂
+                    # Overlay right arm
                     if res_R.ik_success:
                         rgb_R = res_R.rgb
                         mask_R = res_R.mask
@@ -340,7 +340,7 @@ class RobotInpaintProcessor(BaseProcessor):
                             mask_R = cv2.resize(mask_R, (rgb_h.shape[1], rgb_h.shape[0]), interpolation=cv2.INTER_NEAREST)
                         blended[mask_R > 0] = rgb_R[mask_R > 0]
                     
-                    # 叠加左臂
+                    # Overlay left arm
                     if res_L.ik_success:
                         rgb_L = res_L.rgb
                         mask_L = res_L.mask
@@ -349,7 +349,7 @@ class RobotInpaintProcessor(BaseProcessor):
                             mask_L = cv2.resize(mask_L, (rgb_h.shape[1], rgb_h.shape[0]), interpolation=cv2.INTER_NEAREST)
                         blended[mask_L > 0] = rgb_L[mask_L > 0]
 
-                    # Square crop 和 resize
+                    # Square crop and resize
                     if self.square and self.output_resolution > 0:
                         h, w = blended.shape[:2]
                         if h > w:
@@ -363,7 +363,7 @@ class RobotInpaintProcessor(BaseProcessor):
                     
                     img_overlay.append(blended)
 
-                    # 生成 Sequence (Label)
+                    # Generate Sequence (Label)
                     try:
                         left_state = self._get_robot_state(
                             data_standard['ee_pts_left'][idx], 
@@ -391,7 +391,7 @@ class RobotInpaintProcessor(BaseProcessor):
                         print(f"Warning: Failed to create training data for frame {idx}: {e}")
                         sequence.add_frame(TrainingData.create_empty_frame(idx))
 
-                # 清理资源
+                # Clean up resources
                 del r2s_L
                 del r2s_R
 
@@ -402,14 +402,14 @@ class RobotInpaintProcessor(BaseProcessor):
                 return
 
         else:
-            # 标准机器人逻辑
+            # Standard robot logic
             self._initialize_robot()
             data = self._load_data(paths)
             images = self._load_images(paths, data["union_indices"])
             gripper_actions, gripper_widths = self._process_gripper_widths(paths, data)
             sequence, img_overlay, img_birdview = self._process_frames(images, data, gripper_actions, gripper_widths)
 
-        # 保存结果
+        # Save results
         if sequence is not None and len(img_overlay) > 0:
             print(f"Saving {len(img_overlay)} frames...")
             self._save_results(paths, sequence, img_overlay, img_birdview)
